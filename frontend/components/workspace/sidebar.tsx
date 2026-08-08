@@ -25,6 +25,7 @@ import {
   Trash2,
   AlertCircle,
   Loader2,
+  Cpu,
 } from 'lucide-react'
 import {
   DropdownMenu,
@@ -55,6 +56,7 @@ const VIEW_ITEMS = [
   { id: 'architecture', label: 'Architecture', icon: Zap },
   { id: 'bom', label: 'BOM', icon: Package },
   { id: 'validation', label: 'Validation', icon: CheckCircle },
+  { id: 'eda', label: 'EDA', icon: Cpu },
   { id: 'docs', label: 'Documentation', icon: FileText },
   { id: 'pcb', label: 'PCB Board', icon: Package },
 ] as const
@@ -169,7 +171,7 @@ export function Sidebar() {
   }
 
   return (
-    <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-transparent">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-transparent">
       <div className="shrink-0 border-b border-sidebar-border/80 px-4 py-4">
         <div className={`flex items-center gap-2 ${sidebarCollapsed ? 'justify-center' : 'justify-between'}`}>
           {!sidebarCollapsed && (
@@ -318,38 +320,15 @@ export function Sidebar() {
       ) : (
         <ScrollArea className="min-h-0 flex-1">
           <div className="space-y-4 p-4">
-            <section className="rounded-2xl border border-sidebar-border/80 bg-sidebar-accent/30 p-3 shadow-sm">
-              <div className="space-y-3">
-                <div className="flex items-start gap-3">
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-sidebar-border bg-background/70 text-sidebar-foreground/80">
-                    <Package className="h-4 w-4" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="text-[10px] font-mono uppercase tracking-[0.24em] text-sidebar-foreground/50">Projects</p>
-                        <p className="mt-1 text-sm font-semibold text-sidebar-foreground">Workspace projects</p>
-                      </div>
-                      <span className="rounded-full border border-sidebar-border bg-background/60 px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.18em] text-sidebar-foreground/60">
-                        {allProjects.length}
-                      </span>
-                    </div>
-                    <p className="mt-1 text-xs leading-5 text-sidebar-foreground/55">
-                      Create, switch, and manage active workspaces without leaving the sidebar.
-                    </p>
-                  </div>
+            <section className="rounded-2xl border border-sidebar-border/80 bg-sidebar-accent/20 px-3 py-2 shadow-sm">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-[10px] font-mono uppercase tracking-[0.24em] text-sidebar-foreground/50">Projects</p>
+                  <p className="mt-1 text-sm font-semibold text-sidebar-foreground">Workspace projects</p>
                 </div>
-                <Button
-                  onClick={handleNewProject}
-                  variant="outline"
-                  type="button"
-                  aria-label="Create new project"
-                  className="h-9 w-full justify-start rounded-xl border-sidebar-border bg-background/70 px-3 text-xs text-sidebar-foreground transition-colors hover:bg-sidebar-accent"
-                  title="New project"
-                >
-                  <Plus className="mr-2 h-4 w-4" />
-                  New project
-                </Button>
+                <span className="rounded-full border border-sidebar-border bg-background/60 px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.18em] text-sidebar-foreground/60">
+                  {allProjects.length}
+                </span>
               </div>
             </section>
 
@@ -541,23 +520,11 @@ export function Sidebar() {
                 )}
               </div>
             </section>
-
-            <div className="h-px bg-sidebar-border/80" />
           </div>
         </ScrollArea>
       )}
 
       <div className="shrink-0 border-t border-sidebar-border/80 p-4">
-        {!sidebarCollapsed && (
-          <div className="mb-3 rounded-2xl border border-sidebar-border bg-sidebar-accent/30 p-3">
-            <p className="text-[10px] font-mono uppercase tracking-[0.24em] text-sidebar-foreground/50">Upgrade</p>
-            <p className="mt-1 text-sm font-medium text-sidebar-foreground">Unlock advanced workspace features</p>
-            <p className="mt-1 text-xs leading-5 text-sidebar-foreground/55">Keep premium tools within reach without crowding the navigation.</p>
-            <Button type="button" variant="outline" size="sm" className="mt-3 h-9 w-full rounded-xl border-sidebar-border bg-background/70 text-xs text-sidebar-foreground hover:bg-sidebar-accent">
-              Upgrade plan
-            </Button>
-          </div>
-        )}
         <Button
           type="button"
           variant="ghost"

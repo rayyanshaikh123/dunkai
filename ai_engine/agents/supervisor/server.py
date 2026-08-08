@@ -58,6 +58,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.on_event("startup")
+def startup_event():
+    logger.info("Warming up Supervisor pipeline and compiling graph...")
+    compile_graph()
+    logger.info("Supervisor pipeline ready.")
+
+
 SINGLE_NODE_ACTIONS = {
     "generate_requirements": requirements_node,
     "generate_architecture": architecture_node,
@@ -186,6 +194,7 @@ def _serialize_state(state: CircuitState) -> dict[str, Any]:
         "interview_status": state.get("interview_status"),
         "interview_question": state.get("interview_question"),
         "interview_options": state.get("interview_options"),
+        "interview_selection_mode": state.get("interview_selection_mode"),
         "current_node": state.get("current_node"),
         "bom_csv_path": state.get("bom_csv_path"),
     }

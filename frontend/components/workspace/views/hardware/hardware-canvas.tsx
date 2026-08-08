@@ -9,6 +9,8 @@ import {
   MiniMap,
   useEdgesState,
   useNodesState,
+  useReactFlow,
+  ReactFlowProvider,
   type OnSelectionChangeParams,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
@@ -35,7 +37,21 @@ const LEGEND = [
   { label: 'Comms', color: '#f472b6' },
 ]
 
-export function HardwareCanvas({ spec: initialSpec }: { spec: HardwareSpec }) {
+/** Automatically centers & zooms the diagram when loaded or updated */
+function AutoFitView({ spec }: { spec: HardwareSpec }) {
+  const { fitView } = useReactFlow()
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      fitView({ padding: 0.2, duration: 400 })
+    }, 80)
+    return () => clearTimeout(timer)
+  }, [spec, fitView])
+
+  return null
+}
+
+function HardwareCanvasInner({ spec: initialSpec }: { spec: HardwareSpec }) {
   const [spec, setSpec] = useState<HardwareSpec>(initialSpec)
   const initial = useMemo(() => specToFlow(spec), [spec])
   const [nodes, setNodes, onNodesChange] = useNodesState<HardwareFlowNode>(initial.nodes)
@@ -47,7 +63,7 @@ export function HardwareCanvas({ spec: initialSpec }: { spec: HardwareSpec }) {
   const [draftError, setDraftError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
 
-  // Re-render graph whenever the spec changes (JSON apply / external update)
+  // Re-render graph whenever the spec changes
   useEffect(() => {
     const flow = specToFlow(spec)
     setNodes(flow.nodes)
@@ -58,10 +74,6 @@ export function HardwareCanvas({ spec: initialSpec }: { spec: HardwareSpec }) {
     setSpec(initialSpec)
   }, [initialSpec])
 
-  // Selecting a node lights up its bus traces and fades the rest of the board.
-  // The handler must stay referentially stable and bail out when the selection
-  // hasn't actually changed — otherwise React Flow re-invokes it on every
-  // render and we'd loop forever (max update depth).
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const onSelectionChange = useCallback(({ nodes: selected }: OnSelectionChangeParams) => {
     setSelectedIds((prev) => {
@@ -71,7 +83,6 @@ export function HardwareCanvas({ spec: initialSpec }: { spec: HardwareSpec }) {
     })
   }, [])
 
-  // Derive the highlight state instead of writing it back into nodes/edges
   const displayEdges = useMemo(() => {
     const hasSelection = selectedIds.size > 0
     return edges.map((e) => {
@@ -131,7 +142,7 @@ export function HardwareCanvas({ spec: initialSpec }: { spec: HardwareSpec }) {
   }
 
   return (
-    <div className="relative h-full w-full overflow-hidden bg-secondary/20 ">
+    <div className="relative h-full w-full overflow-hidden bg-secondary/20">
       <ReactFlow
         nodes={displayNodes}
         edges={displayEdges}
@@ -141,12 +152,13 @@ export function HardwareCanvas({ spec: initialSpec }: { spec: HardwareSpec }) {
         onEdgesChange={onEdgesChange}
         onSelectionChange={onSelectionChange}
         fitView
-        fitViewOptions={{ padding: 0.18 }}
+        fitViewOptions={{ padding: 0.2, includeHiddenNodes: false }}
         minZoom={0.2}
         maxZoom={1.75}
         proOptions={{ hideAttribution: true }}
         className="!bg-transparent"
       >
+        <AutoFitView spec={spec} />
         <Background variant={BackgroundVariant.Dots} gap={22} size={1} className="!bg-transparent opacity-60" />
         <Controls
           position="bottom-left"
@@ -191,7 +203,7 @@ export function HardwareCanvas({ spec: initialSpec }: { spec: HardwareSpec }) {
 
       {/* JSON Inspector drawer */}
       <Sheet open={inspectorOpen} onOpenChange={setInspectorOpen}>
-        <SheetContent side="right" className="flex w-full flex-col gap-0 border-border bg-background/95  backdrop-blur-xl sm:max-w-xl">
+        <SheetContent side="right" className="flex w-full flex-col gap-0 border-border bg-background/95 backdrop-blur-xl sm:max-w-xl">
           <SheetHeader className="border-b border-border pb-4">
             <SheetTitle className="flex items-center gap-2 font-display text-xl">
               <Braces className="h-4 w-4" />
@@ -240,5 +252,13 @@ export function HardwareCanvas({ spec: initialSpec }: { spec: HardwareSpec }) {
         </SheetContent>
       </Sheet>
     </div>
+  )
+}
+
+export function HardwareCanvas(props: { spec: HardwareSpec }) {
+  return (
+    <ReactFlowProvider>
+      <HardwareCanvasInner {...props} />
+    </ReactFlowProvider>
   )
 }

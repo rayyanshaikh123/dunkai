@@ -13,7 +13,7 @@ import { Button } from '@/components/ui/button'
 
 function WorkspaceContent() {
   const { data, isLoading, isError } = useProjects()
-  const { activeProjectId, setActiveProjectId, sidebarCollapsed } = useWorkspaceStore()
+  const { activeProjectId, setActiveProjectId, setSidebarCollapsed, sidebarCollapsed } = useWorkspaceStore()
 
   const projects = data?.items || []
 
@@ -27,6 +27,12 @@ function WorkspaceContent() {
       setActiveProjectId(projects.length > 0 ? projects[0]._id : null)
     }
   }, [projects, activeProjectId, setActiveProjectId])
+
+  useEffect(() => {
+    if (activeProjectId) {
+      setSidebarCollapsed(false)
+    }
+  }, [activeProjectId, setSidebarCollapsed])
 
   if (isLoading) {
     return (
@@ -78,11 +84,11 @@ function WorkspaceContent() {
 
       <TopBar />
 
-      <div className="flex min-h-0 flex-1">
-        <aside className={`shrink-0 border-r border-foreground/10 transition-[width] duration-300 ${sidebarCollapsed ? 'w-[64px]' : 'w-[248px]'}`}>
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        <aside className={`h-full min-h-0 shrink-0 border-r border-foreground/10 transition-[width] duration-300 ${sidebarCollapsed ? 'w-[64px]' : 'w-[248px]'}`}>
           <Sidebar />
         </aside>
-        <main className="relative min-w-0 flex-1">
+        <main className="relative h-full min-h-0 min-w-0 flex-1 overflow-hidden">
           <MainEditor />
         </main>
       </div>

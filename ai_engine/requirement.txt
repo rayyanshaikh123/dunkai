@@ -10,7 +10,9 @@ faiss-cpu>=1.8.0
 
 # Data handling
 pandas>=2.2.0
-numpy>=1.26.0
+# The installed Torch wheel is built against NumPy 1.x. Keep this below 2
+# until Torch is upgraded to a wheel compiled against the NumPy 2 C API.
+numpy>=1.26.0,<2
 pyarrow>=16.0.0
 
 # HTTP (in-memory fetch from HF)

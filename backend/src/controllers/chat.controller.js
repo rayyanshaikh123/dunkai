@@ -22,6 +22,14 @@ export const sendMessage = asyncHandler(async (req, res) => {
   });
 });
 
+export const saveMessage = asyncHandler(async (req, res) => {
+  send(res, {
+    status: 201,
+    message: 'Message saved',
+    data: await service.saveMessage(req.params.id, req.body, req.user),
+  });
+});
+
 export const rename = asyncHandler(async (req, res) => {
   send(res, { message: 'Chat renamed', data: await service.renameChat(req.params.id, req.body.title, req.user) });
 });

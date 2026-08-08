@@ -42,7 +42,7 @@ export function TopBar() {
   }
 
   return (
-    <div className="h-16 border-b border-foreground/10 bg-gradient-to-r from-background/50 to-background/30 backdrop-blur-xl flex items-center justify-between px-8 gap-6 transition-all duration-500">
+    <header className="relative z-30 flex h-16 shrink-0 items-center justify-between gap-6 border-b border-foreground/10 bg-background/95 px-8 backdrop-blur-xl transition-all duration-500">
       {/* Left: Logo + Project Name */}
       <div className="flex items-center gap-3 min-w-0">
         <Link href="/" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
@@ -155,6 +155,6 @@ export function TopBar() {
       </div>
 
       <NotificationsModal open={showNotifications} onOpenChange={setShowNotifications} />
-    </div>
+    </header>
   )
 }

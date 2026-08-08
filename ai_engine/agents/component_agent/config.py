@@ -27,23 +27,42 @@ HF_TOKEN = os.environ.get("HF_TOKEN_READ")
 
 _HEADERS = {"Authorization": f"Bearer {HF_TOKEN}"} if HF_TOKEN else {}
 
-def _fetch_bytes(filename: str) -> bytes:
-    """Stream a file's raw bytes from the HF dataset repo — nothing touches disk."""
-    url = hf_hub_url(repo_id=HF_REPO_ID, filename=filename, repo_type=HF_REPO_TYPE)
-    resp = requests.get(url, headers=_HEADERS)
-    resp.raise_for_status()
-    return resp.content
+from pathlib import Path
+
+CACHE_DIR = Path(os.environ.get("DUNKAI_CACHE_DIR", Path.home() / ".cache" / "dunkai"))
+CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+def _get_file_path(filename: str) -> Path:
+    """Get path to cached file, downloading from HF on first startup if missing."""
+    file_path = CACHE_DIR / filename
+    if not file_path.exists():
+        print(f"[FAISS Cache] Downloading prebuilt {filename} from Hugging Face...")
+        url = hf_hub_url(repo_id=HF_REPO_ID, filename=filename, repo_type=HF_REPO_TYPE)
+        resp = requests.get(url, headers=_HEADERS, stream=True)
+        resp.raise_for_status()
+        temp_path = file_path.with_suffix(file_path.suffix + ".tmp")
+        with open(temp_path, "wb") as f:
+            for chunk in resp.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+        temp_path.replace(file_path)
+        print(f"[FAISS Cache] Cached {filename} to {file_path}")
+    else:
+        print(f"[FAISS Cache] Loaded prebuilt {filename} from local cache ({file_path})")
+    return file_path
 
 # =============================================================================
-# Dataset (loaded fully in memory)
+# Dataset & Vector Index (Loaded from local disk cache)
 # =============================================================================
 
-DATASET_DF = pd.read_parquet(io.BytesIO(_fetch_bytes("components_ml.parquet")))
+_parquet_path = _get_file_path("components_ml.parquet")
+DATASET_DF = pd.read_parquet(_parquet_path)
 
-EMBEDDINGS = np.load(io.BytesIO(_fetch_bytes("component_embeddings.npy")))
+_embeddings_path = _get_file_path("component_embeddings.npy")
+EMBEDDINGS = np.load(_embeddings_path)
 
-_index_bytes = _fetch_bytes("component_faiss.index")
-FAISS_INDEX = faiss.deserialize_index(np.frombuffer(_index_bytes, dtype=np.uint8))
+_index_path = _get_file_path("component_faiss.index")
+FAISS_INDEX = faiss.read_index(str(_index_path))
 
 # =============================================================================
 # Embedding Model

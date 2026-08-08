@@ -31,6 +31,8 @@ const projectSchema = new mongoose.Schema(
     requirements: { type: mongoose.Schema.Types.Mixed, default: {} },
     architecture: { type: mongoose.Schema.Types.Mixed, default: {} },
     bom: { type: mongoose.Schema.Types.Mixed, default: {} },
+    eda_data: { type: mongoose.Schema.Types.Mixed, default: {} },
+    pcb_ir: { type: mongoose.Schema.Types.Mixed, default: {} },
     validation: { type: mongoose.Schema.Types.Mixed, default: {} },
     documentation: { type: mongoose.Schema.Types.Mixed, default: {} },
 

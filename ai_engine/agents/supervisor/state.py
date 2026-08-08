@@ -34,6 +34,7 @@ class CircuitState(TypedDict, total=False):
     interview_status: str
     interview_question: str | None
     interview_options: list[str] | None
+    interview_selection_mode: str
     build_quantity: int
     bom_csv_path: str
     design_name: str

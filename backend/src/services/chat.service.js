@@ -56,6 +56,26 @@ export const getMessages = async (chatId, user, query = {}) => {
   return buildPaginatedResponse(items, total, { page, limit });
 };
 
+// ---- Save message directly without triggering supervisor AI ----
+
+export const saveMessage = async (chatId, { type = 'user', content, metadata = {}, options = [] }, user) => {
+  const chat = await getOwnedChat(chatId, user);
+
+  const message = await Message.create({
+    chat: chat._id,
+    sender: type === 'user' ? user._id : undefined,
+    type,
+    content,
+    metadata: { ...metadata, options },
+  });
+
+  chat.messageCount += 1;
+  chat.lastMessageAt = new Date();
+  await chat.save();
+
+  return message;
+};
+
 // ---- Send message (stores user message, calls supervisor, stores assistant reply) ----
 
 export const sendMessage = async (chatId, { content, attachments = [], agentType }, user, req = null) => {

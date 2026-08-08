@@ -159,6 +159,12 @@ export const chatApi = {
       body: JSON.stringify({ content, attachments }),
     }),
 
+  saveMessage: (chatId: string, type: 'user' | 'assistant', content: string, options?: string[]) =>
+    request(`/chats/${chatId}/messages/save`, {
+      method: 'POST',
+      body: JSON.stringify({ type, content, options }),
+    }),
+
   rename: (chatId: string, title: string) =>
     request(`/chats/${chatId}`, {
       method: 'PATCH',

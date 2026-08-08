@@ -36,8 +36,9 @@ interface ValidationIssue {
   title?: string
   name?: string
   category?: string
+  code?: string
   status?: 'passed' | 'warning' | 'failed' | 'error' | 'info'
-  severity?: 'error' | 'warning' | 'info'
+  severity?: 'error' | 'warning' | 'info' | 'passed'
   details?: string
   message?: string
   description?: string
@@ -53,9 +54,11 @@ interface ValidationData {
   issues?: ValidationIssue[]
   checks?: ValidationIssue[]
   results?: ValidationIssue[]
-  passed?: number
+  passed?: number | boolean
+  passed_count?: number
   warnings?: number
   failures?: number
+  info_count?: number
   status?: string
   summary?: string
   createdAt?: string
@@ -149,18 +152,29 @@ const CATEGORY_ORDER: CategoryKey[] = [
 ]
 
 function statusFromItem(item: ValidationIssue): StatusKey {
-  const raw = item.status ?? (item.severity === 'error' ? 'failed' : item.severity) ?? 'info'
-  return (['passed', 'warning', 'failed', 'error', 'info'].includes(raw) ? raw : 'info') as StatusKey
+  const sev = item.severity ?? item.status
+  if (sev === 'passed') return 'passed'
+  if (sev === 'error') return 'failed'
+  if (sev === 'warning') return 'warning'
+  if (sev === 'info') return 'info'
+  if (sev === 'failed') return 'failed'
+  return 'info'
 }
 
 function categoryFromItem(item: ValidationIssue): CategoryKey {
+  // Prefer the category field from the backend if it matches a known category
+  const backendCat = item.category?.trim()
+  if (backendCat && CATEGORY_ORDER.includes(backendCat as CategoryKey)) {
+    return backendCat as CategoryKey
+  }
+
   const text = `${item.category ?? ''} ${item.title ?? item.name ?? ''} ${item.details ?? item.message ?? item.description ?? ''}`.toLowerCase()
 
   if (/(thermal|temperature|temp|heat|cool|derating)/.test(text)) return 'Thermal'
   if (/(power|vbat|vcc|vdd|rail|regulator|pmic|battery|current|consumption)/.test(text)) return 'Power'
   if (/(signal|integrity|impedance|noise|crosstalk|clock|timing|skew|trace|routing)/.test(text)) return 'Signal Integrity'
-  if (/(manufactur|assembly|bom|footprint|pick and place|dfm|drc|availability|solder)/.test(text)) return 'Manufacturing'
-  if (/(compliance|regulatory|emc|emi|fcc|ce|ul|rf|antenna|ble|wifi|can|safety)/.test(text)) return 'Compliance'
+  if (/(manufactur|assembly|bom|footprint|pick and place|dfm|drc|availability|solder|stock|moq|package)/.test(text)) return 'Manufacturing'
+  if (/(compliance|regulatory|emc|emi|fcc|ce|ul|rf|antenna|ble|wifi|can|safety|pin|pricing|cost)/.test(text)) return 'Compliance'
   return 'Electrical'
 }
 
@@ -193,6 +207,8 @@ function relativeTime(value?: string): string {
 
 function recommendationFor(item: ValidationIssue, status: StatusKey): string | null {
   if (item.recommendation || item.suggestion || item.fix) return item.recommendation ?? item.suggestion ?? item.fix ?? null
+  if (status === 'passed') return null
+  if (status === 'info') return 'This is informational — no immediate action required.'
   if (status === 'warning') return 'Review the referenced constraint and confirm the chosen value remains within tolerance.'
   if (status === 'failed' || status === 'error') return 'Resolve the issue before export to avoid downstream board or manufacturing failures.'
   return null
@@ -392,12 +408,14 @@ export function ValidationView({ projectId: _projectId }: ValidationViewProps) {
       buckets[categoryFromItem(item)].push(item)
     }
 
-    const passed = validation?.passed ?? checks.filter((c) => statusFromItem(c) === 'passed').length
+    const passed = (typeof validation?.passed_count === 'number' ? validation.passed_count : null) ?? checks.filter((c) => statusFromItem(c) === 'passed').length
     const warnings = validation?.warnings ?? checks.filter((c) => statusFromItem(c) === 'warning').length
     const failures = validation?.failures ?? checks.filter((c) => ['failed', 'error'].includes(statusFromItem(c))).length
+    const infoCount = (typeof validation?.info_count === 'number' ? validation.info_count : null) ?? checks.filter((c) => statusFromItem(c) === 'info').length
+    const actionableTotal = Math.max(passed + warnings + failures, 1)
     const total = Math.max(checks.length, 1)
-    const health = Math.max(0, Math.min(100, Math.round(((passed + warnings * 0.5) / total) * 100)))
-    const status = failures > 0 ? 'Needs Review' : warnings > 0 ? 'Warnings Present' : 'Ready'
+    const health = Math.max(0, Math.min(100, Math.round((passed / actionableTotal) * 100)))
+    const status = failures > 0 ? 'Needs Review' : warnings > 0 ? 'Warnings Present' : 'All Checks Passed'
     const lastTime = validation?.lastValidatedAt ?? validation?.validatedAt ?? validation?.updatedAt ?? validation?.timestamp ?? validation?.createdAt
 
     return {

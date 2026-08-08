@@ -162,6 +162,7 @@ def requirements_node(state: CircuitState) -> dict[str, Any]:
             "interview_status": "question",
             "interview_question": question,
             "interview_options": result.options,
+            "interview_selection_mode": result.selection_mode,
             "workflow_status": "awaiting_input",
             **_append_message(question),
         }
@@ -176,6 +177,7 @@ def requirements_node(state: CircuitState) -> dict[str, Any]:
         "interview_status": "complete",
         "interview_question": None,
         "interview_options": None,
+        "interview_selection_mode": None,
         **_append_message(
             f"Requirements captured for project '{requirements.get('project_name', 'unnamed')}'."
         ),
@@ -487,87 +489,317 @@ def pcb_node(state: CircuitState) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Validation Agent (rule-based checks)
 # ---------------------------------------------------------------------------
-
 def validation_node(state: CircuitState) -> dict[str, Any]:
-    """Validate symbols, footprints, pins, and connectivity."""
+    """Validate BOM, EDA, PCB connectivity, and engineering readiness."""
     eda_items = (state.get("eda_data") or {}).get("items") or []
     pcb_ir = state.get("pcb_ir") or {}
-    bom_summary = (state.get("bom") or {}).get("summary") or {}
+    bom = state.get("bom") or {}
+    bom_rows = bom.get("rows") or []
+    bom_summary = bom.get("summary") or {}
 
     issues: list[dict[str, str]] = []
 
+    # -------------------------------------------------------------------
+    # 1) Per-component checks (runs multiple checks per BOM row)
+    # -------------------------------------------------------------------
+    for row in bom_rows:
+        ref = str(row.get("reference") or "?")
+        mfr_part = row.get("mfr_part")
+        status = row.get("status", "OK")
+        score = row.get("score")
+        unit_price = row.get("unit_price_usd") or row.get("unit_cost") or row.get("price")
+        package = row.get("package")
+        stock = row.get("stock", 0)
+        build_qty = row.get("build_quantity", 1)
+
+        # CHECK: Component selected (BOM completeness)
+        if mfr_part and status != "NO_MATCH":
+            issues.append({
+                "severity": "passed",
+                "code": "COMPONENT_SELECTED",
+                "category": "Electrical",
+                "message": f"{ref}: Component {mfr_part} selected successfully.",
+            })
+        else:
+            issues.append({
+                "severity": "error",
+                "code": "NO_COMPONENT",
+                "category": "Electrical",
+                "message": f"{ref}: No component selected — source manually.",
+            })
+
+        # CHECK: Package / Footprint resolved
+        if package and package not in ("", "None", "CUSTOM"):
+            issues.append({
+                "severity": "passed",
+                "code": "PACKAGE_RESOLVED",
+                "category": "Manufacturing",
+                "message": f"{ref}: Package {package} resolved for PCB layout.",
+            })
+        else:
+            issues.append({
+                "severity": "warning",
+                "code": "MISSING_PACKAGE",
+                "category": "Manufacturing",
+                "message": f"{ref}: No package/footprint resolved — verify before PCB layout.",
+            })
+
+        # CHECK: Pricing available
+        if unit_price is not None:
+            try:
+                price_val = float(str(unit_price).replace("$", "").replace(",", ""))
+                if price_val > 0:
+                    issues.append({
+                        "severity": "passed",
+                        "code": "PRICING_AVAILABLE",
+                        "category": "Compliance",
+                        "message": f"{ref}: Unit cost ${price_val:.2f} available for BOM costing.",
+                    })
+                else:
+                    issues.append({
+                        "severity": "warning",
+                        "code": "ZERO_PRICE",
+                        "category": "Compliance",
+                        "message": f"{ref}: Unit cost is $0.00 — verify distributor pricing.",
+                    })
+            except (ValueError, TypeError):
+                issues.append({
+                    "severity": "warning",
+                    "code": "INVALID_PRICE",
+                    "category": "Compliance",
+                    "message": f"{ref}: Price format unrecognised — verify manually.",
+                })
+
+        # CHECK: Stock availability
+        try:
+            stock_val = int(float(stock or 0))
+            if stock_val >= int(build_qty or 1):
+                issues.append({
+                    "severity": "passed",
+                    "code": "STOCK_SUFFICIENT",
+                    "category": "Manufacturing",
+                    "message": f"{ref}: {stock_val} units in stock (need {build_qty}).",
+                })
+            elif stock_val > 0:
+                issues.append({
+                    "severity": "warning",
+                    "code": "LOW_STOCK",
+                    "category": "Manufacturing",
+                    "message": f"{ref}: Only {stock_val} in stock vs. {build_qty} needed.",
+                })
+        except (ValueError, TypeError):
+            pass
+
+        # CHECK: Match quality / confidence
+        if score is not None:
+            try:
+                score_val = float(score)
+                if score_val >= 0.7:
+                    issues.append({
+                        "severity": "passed",
+                        "code": "HIGH_CONFIDENCE",
+                        "category": "Electrical",
+                        "message": f"{ref}: Component match confidence {score_val:.0%} — strong match.",
+                    })
+                elif score_val >= 0.4:
+                    issues.append({
+                        "severity": "warning",
+                        "code": "MEDIUM_CONFIDENCE",
+                        "category": "Electrical",
+                        "message": f"{ref}: Component match confidence {score_val:.0%} — review datasheet.",
+                    })
+                else:
+                    issues.append({
+                        "severity": "warning",
+                        "code": "LOW_CONFIDENCE",
+                        "category": "Electrical",
+                        "message": f"{ref}: Component match confidence {score_val:.0%} — manual verification required.",
+                    })
+            except (ValueError, TypeError):
+                pass
+
+        # CHECK: BOM status flags from component agent
+        if status == "BELOW_MOQ":
+            issues.append({
+                "severity": "warning",
+                "code": "BELOW_MOQ",
+                "category": "Manufacturing",
+                "message": f"{ref}: Build quantity below minimum order quantity.",
+            })
+        elif status == "INSUFFICIENT_STOCK":
+            issues.append({
+                "severity": "warning",
+                "code": "INSUFFICIENT_STOCK",
+                "category": "Manufacturing",
+                "message": f"{ref}: Insufficient stock for requested build quantity.",
+            })
+        elif status == "LOW_CONFIDENCE":
+            issues.append({
+                "severity": "warning",
+                "code": "LOW_CONFIDENCE_STATUS",
+                "category": "Electrical",
+                "message": f"{ref}: Component flagged as low-confidence match by retrieval engine.",
+            })
+
+    # -------------------------------------------------------------------
+    # 2) EDA symbol/pinout info (downgraded to info, not warning)
+    # -------------------------------------------------------------------
     for item in eda_items:
         ref = str(item.get("reference") or "?")
-        if not item.get("symbol"):
-            issues.append(
-                {
-                    "severity": "warning",
-                    "code": "MISSING_SYMBOL",
-                    "message": f"{ref}: no KiCad/EasyEDA symbol found in EDA dataset.",
-                }
-            )
-        if not item.get("footprint"):
-            issues.append(
-                {
-                    "severity": "warning",
-                    "code": "MISSING_FOOTPRINT",
-                    "message": f"{ref}: no PCB footprint resolved.",
-                }
-            )
-        if not item.get("pins_json"):
-            issues.append(
-                {
-                    "severity": "warning",
-                    "code": "MISSING_PINS",
-                    "message": f"{ref}: pinout (pins_json) unavailable.",
-                }
-            )
+        if item.get("symbol"):
+            issues.append({
+                "severity": "passed",
+                "code": "SYMBOL_AVAILABLE",
+                "category": "Electrical",
+                "message": f"{ref}: EDA schematic symbol available.",
+            })
+        else:
+            issues.append({
+                "severity": "info",
+                "code": "MISSING_SYMBOL",
+                "category": "Electrical",
+                "message": f"{ref}: No KiCad/EasyEDA symbol in dataset — use generic or create manually.",
+            })
 
+        if item.get("pins_json"):
+            issues.append({
+                "severity": "passed",
+                "code": "PINOUT_AVAILABLE",
+                "category": "Compliance",
+                "message": f"{ref}: Pinout data available for net validation.",
+            })
+        else:
+            issues.append({
+                "severity": "info",
+                "code": "MISSING_PINS",
+                "category": "Compliance",
+                "message": f"{ref}: Pinout data unavailable — refer to component datasheet.",
+            })
+
+    # -------------------------------------------------------------------
+    # 3) Unfilled BOM references
+    # -------------------------------------------------------------------
     for ref in bom_summary.get("unfilled_references") or []:
-        issues.append(
-            {
-                "severity": "error",
-                "code": "UNFILLED_BOM",
-                "message": f"{ref}: no component selected in BOM.",
-            }
-        )
+        issues.append({
+            "severity": "error",
+            "code": "UNFILLED_BOM",
+            "category": "Electrical",
+            "message": f"{ref}: No component selected in BOM — source manually.",
+        })
 
+    # -------------------------------------------------------------------
+    # 4) PCB net connectivity checks
+    # -------------------------------------------------------------------
     components = pcb_ir.get("components") or []
     nets = pcb_ir.get("nets") or []
     declared_refs = {c.get("ref_id") for c in components}
 
+    if components:
+        issues.append({
+            "severity": "passed",
+            "code": "PCB_COMPONENTS",
+            "category": "Manufacturing",
+            "message": f"PCB IR contains {len(components)} component(s) placed on board.",
+        })
+    if nets:
+        issues.append({
+            "severity": "passed",
+            "code": "PCB_NETS",
+            "category": "Electrical",
+            "message": f"PCB IR contains {len(nets)} net(s) for routing.",
+        })
+
+    orphan_found = False
     for net in nets:
         for conn in net.get("connections") or []:
             ref_id = str(conn).split(".")[0]
             if ref_id and ref_id not in declared_refs:
-                issues.append(
-                    {
-                        "severity": "error",
-                        "code": "ORPHAN_NET_CONNECTION",
-                        "message": f"Net '{net.get('name')}' references unknown ref '{ref_id}'.",
-                    }
-                )
+                orphan_found = True
+                issues.append({
+                    "severity": "error",
+                    "code": "ORPHAN_NET_CONNECTION",
+                    "category": "Electrical",
+                    "message": f"Net '{net.get('name')}' references unknown ref '{ref_id}'.",
+                })
+    if not orphan_found and nets:
+        issues.append({
+            "severity": "passed",
+            "code": "NET_CONNECTIVITY_OK",
+            "category": "Electrical",
+            "message": "All net connections reference valid component ref IDs.",
+        })
 
-    passed = not any(issue["severity"] == "error" for issue in issues)
+    # -------------------------------------------------------------------
+    # 5) Power rail check
+    # -------------------------------------------------------------------
+    power_nets = [n for n in nets if n.get("net_class") == "power"]
+    ground_nets = [n for n in nets if n.get("net_class") == "ground"]
+    if power_nets:
+        issues.append({
+            "severity": "passed",
+            "code": "POWER_RAIL_DEFINED",
+            "category": "Power",
+            "message": f"{len(power_nets)} power rail net(s) defined.",
+        })
+    if ground_nets:
+        issues.append({
+            "severity": "passed",
+            "code": "GROUND_NET_DEFINED",
+            "category": "Power",
+            "message": f"{len(ground_nets)} ground net(s) defined.",
+        })
+    if not power_nets and not ground_nets and nets:
+        issues.append({
+            "severity": "warning",
+            "code": "NO_POWER_GROUND",
+            "category": "Power",
+            "message": "No explicit power or ground nets found — verify power distribution.",
+        })
+
+    # -------------------------------------------------------------------
+    # Compute final summary
+    # -------------------------------------------------------------------
+    passed_count = sum(1 for i in issues if i["severity"] == "passed")
+    warning_count = sum(1 for i in issues if i["severity"] == "warning")
+    error_count = sum(1 for i in issues if i["severity"] == "error")
+    info_count = sum(1 for i in issues if i["severity"] == "info")
+    total = max(len(issues), 1)
+    has_errors = error_count > 0
+
     validation = {
-        "passed": passed,
+        "passed": not has_errors,
         "issue_count": len(issues),
         "issues": issues,
+        "passed_count": passed_count,
+        "warnings": warning_count,
+        "failures": error_count,
+        "info_count": info_count,
         "checks_run": [
-            "symbol_availability",
-            "footprint_availability",
+            "component_selection",
+            "package_resolution",
+            "pricing_availability",
+            "stock_availability",
+            "match_confidence",
+            "bom_status_flags",
+            "eda_symbol_availability",
             "pinout_availability",
             "bom_completeness",
+            "pcb_component_placement",
             "net_connectivity",
+            "power_rail_validation",
         ],
+        "timestamp": __import__("datetime").datetime.utcnow().isoformat() + "Z",
     }
 
-    status = "passed" if passed else "failed"
+    status = "passed" if not has_errors else "failed"
     return {
         "current_node": "validation",
         "validation": validation,
-        "workflow_status": "completed" if passed else "completed_with_warnings",
-        **_append_message(f"Validation {status} with {len(issues)} issue(s)."),
+        "workflow_status": "completed" if not has_errors else "completed_with_warnings",
+        **_append_message(
+            f"Validation {status}: {passed_count} passed, {warning_count} warnings, "
+            f"{error_count} errors, {info_count} info across {len(issues)} check(s)."
+        ),
     }
 
 

@@ -68,8 +68,12 @@ def build_graph() -> StateGraph:
     return graph
 
 
+from functools import lru_cache
+
+
+@lru_cache(maxsize=1)
 def compile_graph():
-    """Return a compiled LangGraph runnable."""
+    """Return a compiled LangGraph runnable (singleton cached)."""
     return build_graph().compile()
 
 
