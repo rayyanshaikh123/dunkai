@@ -380,74 +380,194 @@ def eda_enrichment_node(state: CircuitState) -> dict[str, Any]:
 # PCB Agent (rule-based PCB IR using existing eda.py generator)
 # ---------------------------------------------------------------------------
 
-def _interface_pin_name(interface: str, index: int = 0) -> str:
-    mapping = {
-        "I2C": ("SCL", "SDA"),
-        "SPI": ("SCK", "MOSI", "MISO", "CS"),
-        "UART": ("TX", "RX"),
-        "USB": ("D+", "D-"),
-        "Power": ("VDD", "VCC", "3V3"),
-        "GPIO": (f"GPIO{index + 1}",),
-        "BLE": ("ANT", "TX", "RX"),
-        "WiFi": ("ANT", "TX", "RX"),
-        "CAN": ("CANH", "CANL"),
-        "Ethernet": ("TX+", "TX-", "RX+", "RX-"),
-    }
-    names = mapping.get(interface, (interface.upper(),))
-    return names[min(index, len(names) - 1)]
+# ── Schema v2: interface + role, never an asserted pin name ─────────────────
+#
+# `_interface_pin_name` and the old `_build_nets_from_architecture` were REMOVED
+# here, not disabled. They derived every pin name from a fixed interface->name
+# table (I2C always -> SCL/SDA) without ever consulting the selected component,
+# which fabricated pin names for every design this system has ever produced. The
+# backing dataset carries no pinout data at all (0 of 490,894 rows), so there was
+# nothing for them to have consulted. See pcb-agent DECISIONS.md D-076.
+#
+# Under schema 2.0 dunkai does not claim physical pin facts. It emits the
+# INTENT -- which interface, and what role each component plays on it -- and the
+# downstream PCB module resolves that to real pads against the real part.
+#
+# A net is ONE WIRE. Every member states its role on that wire. This is what
+# structurally removes the four long-standing upstream bugs: a net can no longer
+# tie a clock to a data pin (incompatible roles are rejected), an I2C bus is one
+# net per signal carrying every participant (so it cannot split into half-nets),
+# and rails are declared once instead of per-edge (so no redundant POWER_N).
+
+SCHEMA_VERSION_V2 = "2.0"
+
+# Roles legal for each interface. Anything not listed is rejected upstream by
+# the handoff validator rather than being silently mapped to something.
+INTERFACE_ROLES: dict[str, tuple[str, ...]] = {
+    "I2C": ("CLOCK", "DATA"),
+    "SPI": ("CLOCK", "MOSI", "MISO", "CHIP_SELECT"),
+    "UART": ("TX", "RX"),
+    "USB": ("DP", "DM", "VBUS"),
+    "CAN": ("CAN_H", "CAN_L"),
+    "Ethernet": ("TXP", "TXN", "RXP", "RXN"),
+    "SDIO": ("CLOCK", "CMD", "DATA"),
+    "PCIe": ("TXP", "TXN", "RXP", "RXN", "CLOCK"),
+    "I2S": ("BIT_CLOCK", "WORD_CLOCK", "DATA"),
+    "Power": ("SUPPLY", "GROUND"),
+    "GPIO": ("GPIO",),
+    "PWM": ("PWM",),
+    "ADC": ("ANALOG_IN",),
+    "Analog": ("ANALOG_IN",),
+    "Audio": ("AUDIO",),
+    # Wireless links are not board nets -- see _WIRELESS below.
+    "BLE": (),
+    "WiFi": (),
+    "RF": (),
+}
+
+# Interfaces that describe a link through the air, not copper between two parts.
+# v1 mapped these to an "ANT" pin on BOTH endpoints, inventing a connection that
+# does not physically exist. They are recorded as logical links instead.
+_WIRELESS = frozenset({"BLE", "WiFi", "RF"})
+
+# Buses where every participant shares the same wire per signal. Edges sharing a
+# component are merged into ONE bus, which is what prevents split half-nets.
+_SHARED_BUS = {
+    "I2C": ("CLOCK", "DATA"),
+    "SPI": ("CLOCK", "MOSI", "MISO"),
+    "I2S": ("BIT_CLOCK", "WORD_CLOCK", "DATA"),
+}
+
+# Point-to-point links where the two ends take COMPLEMENTARY roles.
+_COMPLEMENTARY = {
+    "UART": (("TX", "RX"), ("RX", "TX")),
+    "CAN": (("CAN_H", "CAN_H"), ("CAN_L", "CAN_L")),
+    "USB": (("DP", "DP"), ("DM", "DM")),
+}
+
+
+def _merge_buses(edges: list[tuple[str, str]]) -> list[set[str]]:
+    """Group edges sharing a component into connected components (one bus each)."""
+    buses: list[set[str]] = []
+    for a, b in edges:
+        touching = [g for g in buses if a in g or b in g]
+        merged = {a, b}
+        for g in touching:
+            merged |= g
+            buses.remove(g)
+        buses.append(merged)
+    return buses
 
 
 def _build_nets_from_architecture(
     architecture: dict[str, Any],
     references: list[str],
-) -> list[dict[str, Any]]:
+    categories: dict[str, str] | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Build schema-2.0 nets from the architecture graph.
+
+    Returns ``(nets, wireless_links)``. Every net is a single wire carrying one
+    signal; every member declares its role on that wire. No pin name is ever
+    produced here -- that is the PCB module's job, against the real part.
+    """
     graph = architecture.get("architecture_graph") or {}
     nodes = graph.get("nodes") or []
     edges = graph.get("edges") or []
+    categories = categories or {}
 
     ref_by_node_id: dict[str, str] = {}
+    category_by_ref: dict[str, str] = {}
     for index, node in enumerate(nodes):
         node_id = node.get("id")
         if not node_id:
             continue
-        ref_by_node_id[node_id] = references[index] if index < len(references) else f"U{index + 1}"
+        ref = references[index] if index < len(references) else f"U{index + 1}"
+        ref_by_node_id[node_id] = ref
+        category_by_ref[ref] = (node.get("data") or {}).get("category") or ""
 
-    nets: list[dict[str, Any]] = []
-    if references:
-        nets.append(
-            {
-                "name": "GND",
-                "connections": [f"{ref}.GND" for ref in references],
-                "net_class": "ground",
-            }
-        )
-        nets.append(
-            {
-                "name": "POWER_RAIL_3V3",
-                "connections": [f"{ref}.VDD" for ref in references],
-                "net_class": "power",
-            }
-        )
+    def member(ref: str, role: str) -> dict[str, str]:
+        return {"ref_id": ref, "role": role}
 
-    for edge_index, edge in enumerate(edges):
-        interface = edge.get("data", {}).get("interface") or "signal"
+    by_interface: dict[str, list[tuple[str, str]]] = {}
+    wireless: list[dict[str, Any]] = []
+    for edge in edges:
+        interface = (edge.get("data") or {}).get("interface") or "GPIO"
         source = ref_by_node_id.get(edge.get("source"))
         target = ref_by_node_id.get(edge.get("target"))
         if not source or not target:
             continue
+        if interface in _WIRELESS:
+            wireless.append(
+                {"interface": interface, "endpoints": [source, target],
+                 "note": "wireless link, not a board net"}
+            )
+            continue
+        by_interface.setdefault(interface, []).append((source, target))
 
-        pin_a = _interface_pin_name(interface, 0)
-        pin_b = _interface_pin_name(interface, 1 if interface in {"I2C", "UART", "SPI"} else 0)
-        net_name = f"{interface}_{edge_index + 1}".upper()
-        nets.append(
-            {
-                "name": net_name,
-                "connections": [f"{source}.{pin_a}", f"{target}.{pin_b}"],
-                "net_class": "power" if interface == "Power" else "signal",
-            }
-        )
+    nets: list[dict[str, Any]] = []
+    counter = 0
 
-    return nets
+    def add(name: str, interface: str, net_class: str, members: list[dict[str, str]]) -> None:
+        nonlocal counter
+        counter += 1
+        nets.append({
+            "name": name,
+            "interface": interface,
+            "net_class": net_class,
+            "members": members,
+        })
+
+    # --- Power: rails, declared once, membership taken from real Power edges ---
+    power_edges = by_interface.pop("Power", [])
+    supplied = sorted({r for pair in power_edges for r in pair})
+    if supplied:
+        add("POWER_RAIL", "Power", "power", [member(r, "SUPPLY") for r in supplied])
+    if references:
+        # Ground is genuinely common to every part on a shared-ground board. It is
+        # stated explicitly here rather than assumed silently; a part that has no
+        # ground pad is caught downstream as a capability mismatch against its
+        # real pin set, not papered over here.
+        add("GND", "Power", "ground", [member(r, "GROUND") for r in references])
+
+    # --- Shared buses: one net per signal, ALL participants on each ------------
+    for interface, signals in _SHARED_BUS.items():
+        pairs = by_interface.pop(interface, [])
+        if not pairs:
+            continue
+        for bus_index, bus in enumerate(_merge_buses(pairs), start=1):
+            ordered = sorted(bus)
+            for role in signals:
+                if role == "MISO" and interface == "SPI" and len(ordered) < 2:
+                    continue
+                add(f"{interface.upper()}_{bus_index}_{role}", interface, "signal",
+                    [member(r, role) for r in ordered])
+            if interface == "SPI":
+                # CS is per-peripheral: the controller is the shared node.
+                degree = {r: sum(1 for p in pairs if r in p) for r in ordered}
+                controller = max(
+                    ordered,
+                    key=lambda r: (degree[r], category_by_ref.get(r, "") == "Processing"),
+                )
+                for peripheral in [r for r in ordered if r != controller]:
+                    add(f"{interface.upper()}_{bus_index}_CS_{peripheral}", interface, "signal",
+                        [member(controller, "CHIP_SELECT"), member(peripheral, "CHIP_SELECT")])
+
+    # --- Point-to-point links with complementary roles ------------------------
+    for interface, role_pairs in _COMPLEMENTARY.items():
+        for source, target in by_interface.pop(interface, []):
+            for source_role, target_role in role_pairs:
+                add(f"{interface.upper()}_{counter + 1}_{source_role}", interface, "signal",
+                    [member(source, source_role), member(target, target_role)])
+
+    # --- Everything else: one net per edge, same role both ends ---------------
+    for interface, pairs in sorted(by_interface.items()):
+        roles = INTERFACE_ROLES.get(interface) or ("GPIO",)
+        role = roles[0]
+        for source, target in pairs:
+            add(f"{interface.upper()}_{counter + 1}_{role}", interface, "signal",
+                [member(source, role), member(target, role)])
+
+    return nets, wireless
 
 
 def pcb_node(state: CircuitState) -> dict[str, Any]:
@@ -462,17 +582,23 @@ def pcb_node(state: CircuitState) -> dict[str, Any]:
         return _error("PCB node requires bom_csv_path from the Component Agent.")
 
     references = [str(row.get("reference")) for row in rows if row.get("reference")]
-    net_connections = _build_nets_from_architecture(architecture, references)
+    nets, wireless_links = _build_nets_from_architecture(architecture, references)
 
     try:
         generator = _eda_generator()
         pcb_ir = generator.build_pcb_ir(
             design_name=_project_name(state),
             bom_csv_path=csv_path,
-            net_connections=net_connections,
+            net_connections=nets,
+            schema_version=SCHEMA_VERSION_V2,
         )
     except Exception as exc:
         return _error(f"PCB Agent failed: {exc}")
+
+    if wireless_links:
+        # Recorded rather than emitted as copper: v1 gave both endpoints an "ANT"
+        # pin, inventing a trace for a link that travels through the air.
+        pcb_ir["wireless_links"] = wireless_links
 
     return {
         "current_node": "pcb",
@@ -488,20 +614,196 @@ def pcb_node(state: CircuitState) -> dict[str, Any]:
 # Validation Agent (rule-based checks)
 # ---------------------------------------------------------------------------
 
+# Role pairs that may legitimately share one wire despite differing. Everything
+# else on a net must carry the SAME role; a clock never shares with a data line.
+_COMPATIBLE_ROLE_PAIRS = frozenset({
+    frozenset({"TX", "RX"}),
+})
+
+
+def _validate_handoff(state: CircuitState, pcb_ir: dict[str, Any]) -> dict[str, Any]:
+    """Schema 2.0 validation: is this a well-formed HANDOFF?
+
+    This deliberately does NOT answer "can this be built?". Under schema 2.0
+    dunkai asserts no physical facts -- no symbols, no footprints, no pin
+    mappings -- so it has no basis for a buildability claim and does not make
+    one. Symbol/footprint/pin resolution and the verdict that depends on them
+    belong to the downstream PCB module, which owns `compilable` and is the sole
+    authority on it.
+
+    MISSING_SYMBOL and MISSING_PINS are therefore NOT checked here. They remain
+    live for schema 1.0 input, where dunkai did claim those facts.
+
+    What is checked: every net names a known interface, every member declares a
+    role legal for it, the roles on a net can physically share a wire, every
+    referenced component exists, the BOM is filled, and every component carries
+    the package string the PCB module needs to resolve a footprint.
+    """
+    bom_summary = (state.get("bom") or {}).get("summary") or {}
+    components = pcb_ir.get("components") or []
+    nets = pcb_ir.get("nets") or []
+    declared_refs = {c.get("ref_id") for c in components}
+
+    issues: list[dict[str, str]] = []
+
+    # `package` IS dunkai's to assert -- it is catalogue metadata from its own
+    # BOM, not a resolved physical artefact -- and the PCB module needs it as the
+    # input to footprint resolution. This replaces v1's MISSING_FOOTPRINT, which
+    # checked a field that silently fell back to `package` anyway.
+    for component in components:
+        ref = str(component.get("ref_id") or "?")
+        package = component.get("package")
+        if not package or str(package).strip() in {"", "-", "nan", "None"}:
+            issues.append({
+                "severity": "error",
+                "code": "MISSING_PACKAGE",
+                "message": f"{ref}: no package string; the PCB module cannot resolve a footprint.",
+            })
+
+    for ref in bom_summary.get("unfilled_references") or []:
+        issues.append({
+            "severity": "error",
+            "code": "UNFILLED_BOM",
+            "message": f"{ref}: no component selected in BOM.",
+        })
+
+    for net in nets:
+        name = net.get("name")
+        interface = net.get("interface")
+        members = net.get("members") or []
+
+        if interface not in INTERFACE_ROLES:
+            issues.append({
+                "severity": "error",
+                "code": "UNKNOWN_INTERFACE",
+                "message": f"Net '{name}': unknown interface '{interface}'.",
+            })
+            continue
+
+        legal_roles = INTERFACE_ROLES[interface]
+        if not members:
+            issues.append({
+                "severity": "error",
+                "code": "EMPTY_NET",
+                "message": f"Net '{name}': no members.",
+            })
+            continue
+
+        for member in members:
+            ref_id = member.get("ref_id")
+            role = member.get("role")
+            if ref_id not in declared_refs:
+                issues.append({
+                    "severity": "error",
+                    "code": "ORPHAN_NET_MEMBER",
+                    "message": f"Net '{name}' references unknown ref '{ref_id}'.",
+                })
+            if role not in legal_roles:
+                issues.append({
+                    "severity": "error",
+                    "code": "INVALID_ROLE",
+                    "message": (
+                        f"Net '{name}': role '{role}' is not valid for interface "
+                        f"'{interface}' (expected one of {', '.join(legal_roles) or 'none'})."
+                    ),
+                })
+
+        roles = {m.get("role") for m in members}
+        if len(roles) > 1 and frozenset(roles) not in _COMPATIBLE_ROLE_PAIRS:
+            issues.append({
+                "severity": "error",
+                "code": "INCOMPATIBLE_ROLES",
+                "message": (
+                    f"Net '{name}' mixes roles {sorted(r for r in roles if r)} on one wire. "
+                    "A single net carries one signal; only complementary pairs may differ."
+                ),
+            })
+
+    well_formed = not any(issue["severity"] == "error" for issue in issues)
+    return {
+        "well_formed": well_formed,
+        "schema_version": pcb_ir.get("schema_version"),
+        "issue_count": len(issues),
+        "issues": issues,
+        "scope": (
+            "Well-formedness of the handoff document only. This is NOT a "
+            "buildability claim: symbol, footprint and pin resolution are the "
+            "downstream PCB module's responsibility, and `compilable` is its "
+            "field to set."
+        ),
+        "checks_run": [
+            "interface_known",
+            "role_valid_for_interface",
+            "role_compatibility_on_net",
+            "component_references_resolve",
+            "bom_completeness",
+            "package_present",
+        ],
+    }
+
+
 def validation_node(state: CircuitState) -> dict[str, Any]:
-    """Validate symbols, footprints, pins, and connectivity."""
-    eda_items = (state.get("eda_data") or {}).get("items") or []
+    """Validate the design, branching on the upstream schema version.
+
+    Schema 2.0 -> `handoff_validation.well_formed` (is this a valid handoff?)
+    Schema 1.0 -> `validation.passed`            (legacy buildability-ish claim)
+    """
     pcb_ir = state.get("pcb_ir") or {}
+    if str(pcb_ir.get("schema_version") or "").startswith("2."):
+        handoff = _validate_handoff(state, pcb_ir)
+        ok = handoff["well_formed"]
+        status = "well-formed" if ok else "malformed"
+        return {
+            "current_node": "validation",
+            "handoff_validation": handoff,
+            "workflow_status": "completed" if ok else "completed_with_warnings",
+            **_append_message(
+                f"Handoff {status} with {handoff['issue_count']} issue(s). "
+                "Buildability is determined downstream by the PCB module."
+            ),
+        }
+
+    return _validate_v1(state, pcb_ir)
+
+
+def _validate_v1(state: CircuitState, pcb_ir: dict[str, Any]) -> dict[str, Any]:
+    """Schema 1.0 validation -- unchanged legacy behaviour.
+
+    Kept intact for v1-shaped input, where dunkai DID assert symbol/footprint/
+    pin facts and so is answerable for them. New designs use schema 2.0 and the
+    handoff validator above.
+    """
+    eda_items = (state.get("eda_data") or {}).get("items") or []
     bom_summary = (state.get("bom") or {}).get("summary") or {}
 
     issues: list[dict[str, str]] = []
 
+    # MISSING_SYMBOL / MISSING_FOOTPRINT / MISSING_PINS are ERRORS, not warnings.
+    #
+    # `passed` below is computed as "no issue has severity == error", so while
+    # these three were warnings a design could report validation.passed = True
+    # with no symbol, no footprint and no pinout for a SINGLE component -- let
+    # alone all of them. That is not a hypothetical: the first real end-to-end
+    # capture (2026-08-20, 11 components) reported passed = True carrying 11x
+    # MISSING_SYMBOL and 11x MISSING_PINS, i.e. every component in the design.
+    # The downstream PCB module independently rated the same design
+    # compilable = false with 22 errors.
+    #
+    # These three share one shape: each fires on essentially every component on
+    # every run, because the backing dataset has no pinout data at all (0 of
+    # 490,894 rows carry pins_json/pinout/symbol). Flipping only one of them
+    # would leave passed = True reachable through the other two, so all three
+    # move together.
+    #
+    # A design missing symbols, footprints or pin mappings cannot be
+    # manufactured. Reporting it as passed is self-certification, not
+    # validation.
     for item in eda_items:
         ref = str(item.get("reference") or "?")
         if not item.get("symbol"):
             issues.append(
                 {
-                    "severity": "warning",
+                    "severity": "error",
                     "code": "MISSING_SYMBOL",
                     "message": f"{ref}: no KiCad/EasyEDA symbol found in EDA dataset.",
                 }
@@ -509,7 +811,7 @@ def validation_node(state: CircuitState) -> dict[str, Any]:
         if not item.get("footprint"):
             issues.append(
                 {
-                    "severity": "warning",
+                    "severity": "error",
                     "code": "MISSING_FOOTPRINT",
                     "message": f"{ref}: no PCB footprint resolved.",
                 }
@@ -517,7 +819,7 @@ def validation_node(state: CircuitState) -> dict[str, Any]:
         if not item.get("pins_json"):
             issues.append(
                 {
-                    "severity": "warning",
+                    "severity": "error",
                     "code": "MISSING_PINS",
                     "message": f"{ref}: pinout (pins_json) unavailable.",
                 }
@@ -551,6 +853,7 @@ def validation_node(state: CircuitState) -> dict[str, Any]:
     passed = not any(issue["severity"] == "error" for issue in issues)
     validation = {
         "passed": passed,
+        "schema_version": pcb_ir.get("schema_version") or "1.0",
         "issue_count": len(issues),
         "issues": issues,
         "checks_run": [
@@ -580,8 +883,12 @@ def documentation_node(state: CircuitState) -> dict[str, Any]:
     requirements = _requirements_from_state(state) or {}
     architecture = _architecture_from_state(state) or {}
     bom = state.get("bom") or {}
-    validation = state.get("validation") or {}
     pcb_ir = state.get("pcb_ir") or {}
+    # v2 reports handoff well-formedness; v1 reports its legacy `passed`. Only
+    # one of the two keys is ever populated, by validation_node's branch.
+    handoff = state.get("handoff_validation") or {}
+    validation = handoff or state.get("validation") or {}
+    is_handoff = bool(handoff)
 
     summary = bom.get("summary") or {}
     rows = bom.get("rows") or []
@@ -606,7 +913,15 @@ def documentation_node(state: CircuitState) -> dict[str, Any]:
             f"**Subsystems:** {len(graph.get('nodes') or [])}",
             f"**BOM line items:** {summary.get('total_line_items', len(rows))}",
             f"**Estimated cost (USD):** ${float(summary.get('total_cost_usd') or 0):.2f}",
-            f"**Validation:** {'passed' if validation.get('passed') else 'needs review'}",
+            (
+                # Deliberately different wording per schema: a well-formed handoff
+                # is NOT a claim that the board can be built, and the summary must
+                # not let a reader mistake one for the other.
+                f"**Handoff:** {'well-formed' if validation.get('well_formed') else 'needs review'}"
+                " (buildability is determined downstream by the PCB module)"
+                if is_handoff
+                else f"**Validation:** {'passed' if validation.get('passed') else 'needs review'}"
+            ),
         ]
     )
 

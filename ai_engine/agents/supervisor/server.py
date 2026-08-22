@@ -143,7 +143,7 @@ def _build_initial_state(payload: SupervisorRequest) -> CircuitState:
     if architecture:
         state["architecture"] = architecture
 
-    for key in ("bom", "eda_data", "pcb_ir", "validation", "documentation"):
+    for key in ("bom", "eda_data", "pcb_ir", "validation", "handoff_validation", "documentation"):
         value = project.get(key)
         if isinstance(value, dict) and value:
             state[key] = value  # type: ignore[literal-required]
@@ -179,6 +179,9 @@ def _serialize_state(state: CircuitState) -> dict[str, Any]:
         "eda_data": state.get("eda_data"),
         "pcb_ir": state.get("pcb_ir"),
         "validation": state.get("validation"),
+        # Schema 2.0 handoff result. Distinct key from "validation" on purpose:
+        # well_formed != passed, and neither means "buildable" -- see nodes.py.
+        "handoff_validation": state.get("handoff_validation"),
         "documentation": state.get("documentation"),
         "messages": messages,
         "errors": state.get("errors") or [],

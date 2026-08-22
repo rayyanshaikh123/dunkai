@@ -74,11 +74,23 @@ class DynamicPCBIRGenerator:
         return components
 
     def validate_nets(self, components: List[Dict[str, Any]], nets: List[Dict[str, Any]]) -> List[str]:
-        """Checks for orphan ref_ids in nets that do not exist in components."""
+        """Checks for orphan ref_ids in nets that do not exist in components.
+
+        Handles both net shapes: schema 1.0's ``connections: ["U1.SDA"]`` and
+        schema 2.0's ``members: [{"ref_id": "U1", "role": "DATA"}]``.
+        """
         declared_refs = {c["ref_id"] for c in components}
         warnings = []
-        
+
         for net in nets:
+            # schema 2.0
+            for member in net.get("members", []):
+                ref_id = member.get("ref_id")
+                if ref_id not in declared_refs:
+                    warnings.append(
+                        f"⚠️ Warning: Member '{ref_id}' in net '{net['name']}' references unknown RefID '{ref_id}'"
+                    )
+            # schema 1.0
             for conn in net.get("connections", []):
                 ref_id = conn.split(".")[0]
                 if ref_id not in declared_refs:
@@ -86,24 +98,25 @@ class DynamicPCBIRGenerator:
         return warnings
 
     def build_pcb_ir(
-        self, 
-        design_name: str, 
-        bom_csv_path: str, 
-        net_connections: List[Dict[str, Any]], 
+        self,
+        design_name: str,
+        bom_csv_path: str,
+        net_connections: List[Dict[str, Any]],
         layer_count: int = 4,
         width_mm: float = 100.0,
-        height_mm: float = 60.0
+        height_mm: float = 60.0,
+        schema_version: str = "2.0",
     ) -> Dict[str, Any]:
-        
+
         components = self.parse_bom_csv(bom_csv_path)
-        
+
         # Check validation warnings
         warnings = self.validate_nets(components, net_connections)
         for w in warnings:
             print(w)
-            
+
         return {
-            "schema_version": "1.0",
+            "schema_version": schema_version,
             "design_name": design_name,
             "components": components,
             "nets": net_connections,

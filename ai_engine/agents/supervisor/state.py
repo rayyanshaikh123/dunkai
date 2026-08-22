@@ -23,7 +23,14 @@ class CircuitState(TypedDict, total=False):
     bom: dict[str, Any]
     eda_data: dict[str, Any]
     pcb_ir: dict[str, Any]
+    # Schema 1.0 only: "does this look buildable?" -- carries `passed`.
     validation: dict[str, Any]
+    # Schema 2.0: "is this a well-formed handoff?" -- carries `well_formed`, never
+    # `passed` or `compilable`. Deliberately a DIFFERENT key from `validation` so
+    # that reading `.validation.passed` off a v2 payload yields None and fails
+    # loudly, rather than silently returning a value that means something else.
+    # Buildability is decided downstream by the PCB module, and only there.
+    handoff_validation: dict[str, Any]
     documentation: dict[str, Any]
     messages: Annotated[list[Any], add_messages]
     errors: Annotated[list[str], _merge_errors]
