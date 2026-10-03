@@ -1,0 +1,141 @@
+{
+  "schema_version": "1.0",
+  "design_name": "circuitmind_system_board",
+  "components": [
+    {
+      "ref_id": "U1",
+      "part_class": "processing",
+      "part_number": "MC9S08DZ32ACLC",
+      "package": "LQFP-32(7x7)",
+      "quantity": 1
+    },
+    {
+      "ref_id": "U2",
+      "part_class": "communication",
+      "part_number": "ESPC2-12-N4",
+      "package": "SMD,24x16mm",
+      "quantity": 1
+    },
+    {
+      "ref_id": "U3",
+      "part_class": "power",
+      "part_number": "TP4110",
+      "package": "SOP-16",
+      "quantity": 1
+    },
+    {
+      "ref_id": "U4",
+      "part_class": "power",
+      "part_number": "HY2111-GB",
+      "package": "SOT-23-6",
+      "quantity": 1
+    },
+    {
+      "ref_id": "U5",
+      "part_class": "output",
+      "part_number": "PC817B-MS",
+      "package": "SOP-4",
+      "quantity": 1
+    },
+    {
+      "ref_id": "U6",
+      "part_class": "output",
+      "part_number": "AD116",
+      "package": "SOT23-6",
+      "quantity": 1
+    },
+    {
+      "ref_id": "U7",
+      "part_class": "sensor",
+      "part_number": "MCP9808T-E/MC",
+      "package": "DFN-8-EP(2x3)",
+      "quantity": 1
+    },
+    {
+      "ref_id": "U8",
+      "part_class": "sensor",
+      "part_number": "MC1081S",
+      "package": "QFN-16-EP(3x3)",
+      "quantity": 1
+    },
+    {
+      "ref_id": "U9",
+      "part_class": "sensor",
+      "part_number": "HDC2010YPAR",
+      "package": "DSBGA-6",
+      "quantity": 1
+    },
+    {
+      "ref_id": "U10",
+      "part_class": "communication",
+      "part_number": "ESP-M1",
+      "package": "SMD,15x12.3mm",
+      "quantity": 1
+    },
+    {
+      "ref_id": "U11",
+      "part_class": "input",
+      "part_number": "TUSB320IRWBR",
+      "package": "X2-QFN-12(1.6x1.6)",
+      "quantity": 1
+    },
+    {
+      "ref_id": "U12",
+      "part_class": "memory",
+      "part_number": "IS25LP040E-JYLE-TR",
+      "package": "USON-8-EP(2x3)",
+      "quantity": 1
+    }
+  ],
+  "nets": [
+    {
+      "name": "POWER_RAIL_3V3",
+      "connections": [
+        "U1.VDD",
+        "U2.VCC",
+        "U7.VDD",
+        "U8.VDD",
+        "U9.VDD",
+        "U10.3V3",
+        "U12.VCC"
+      ],
+      "net_class": "power"
+    },
+    {
+      "name": "GND",
+      "connections": [
+        "U1.GND",
+        "U2.GND",
+        "U3.GND",
+        "U4.GND",
+        "U5.GND",
+        "U6.GND",
+        "U7.GND",
+        "U8.GND",
+        "U9.GND",
+        "U10.GND",
+        "U11.GND",
+        "U12.GND"
+      ],
+      "net_class": "ground"
+    },
+    {
+      "name": "I2C_SCL",
+      "connections": ["U1.SCL", "U7.SCL", "U8.SCL", "U9.SCL", "U11.SCL"],
+      "net_class": "signal"
+    },
+    {
+      "name": "I2C_SDA",
+      "connections": ["U1.SDA", "U7.SDA", "U8.SDA", "U9.SDA", "U11.SDA"],
+      "net_class": "signal"
+    }
+  ],
+  "constraints": {
+    "layer_count": 4,
+    "board_outline": {
+      "shape": "rectangle",
+      "width_mm": 100.0,
+      "height_mm": 60.0
+    }
+  }
+}
