@@ -47,7 +47,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         const result = await authApi.login(email, password)
         setUser(result.user)
-        router.push('/workspace')
+        router.push((result.user as { isVerified?: boolean })?.isVerified
+          ? '/workspace' : `/verify-email?email=${encodeURIComponent(email)}`)
       } catch (err) {
         const message = err instanceof ApiError ? err.message : 'Login failed. Please try again.'
         setError(message)
@@ -63,7 +64,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         const result = await authApi.register(name, email, password)
         setUser(result.user)
-        router.push('/workspace')
+        router.push(`/verify-email?email=${encodeURIComponent(email)}`)
       } catch (err) {
         const message = err instanceof ApiError ? err.message : 'Registration failed. Please try again.'
         setError(message)

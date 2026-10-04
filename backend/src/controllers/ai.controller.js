@@ -13,15 +13,20 @@ import {
   persistSafetyAudit,
 } from '../services/supervisor.service.js';
 import { configuredProviders, resolveCredentials } from '../services/apiKey.service.js';
-import { authorizeBoardProvider, boardProviderStatus, consume } from '../services/billing.service.js';
+import { authorizeBoardProvider, boardProviderStatus } from '../services/billing.service.js';
+import { reserveCharge, settleCharge } from '../services/credits.service.js';
 import { Document } from '../models/Document.js';
 import { Artifact } from '../models/Artifact.js';
+import { AiJob } from '../models/AiJob.js';
+import { ApiError } from '../utils/ApiError.js';
+import { env } from '../config/env.js';
+import { enqueueAiJob, aiQueue, redisConnection } from '../services/queue.service.js';
 import { logActivity } from '../helpers/activity.js';
 import { notify } from '../helpers/notification.js';
 import { v4 as uuidv4 } from 'uuid';
 
 /**
- * Who pays for this request, counted before it starts.
+ * Who pays for this request, reserved before it starts.
  *
  * Resolves the user's own keys (BYOK) and meters the request against their
  * plan: a board against hosted boards unless their key for that provider pays,
@@ -29,32 +34,37 @@ import { v4 as uuidv4 } from 'uuid';
  * every agent in the pipeline. Throws 402 when a hosted quota is spent and 400
  * when the chosen board provider cannot run here.
  *
- * @returns {{ credentials: object, refund: () => Promise<void> }} refund is for
- *   work that never started (the supervisor was unreachable).
+ * @returns {{ credentials: object }}
  */
-const prepareAiRequest = async (req, { action = 'run_workflow', provider = null } = {}) => {
+const prepareAiRequest = async (req, { jobId, action = 'run_workflow', provider = null } = {}) => {
   const credentials = await resolveCredentials(req.user._id);
   const have = new Set(Object.keys(credentials));
 
   if (action === 'generate_board') {
-    const providerId = provider || (await getCapabilities())?.default_board_provider || 'claude-code';
+    const providerId = provider || (await getCapabilities())?.default_board_provider || 'groq';
     const { byok } = await authorizeBoardProvider(req.user, providerId, have);
-    const { refund } = await consume(req.user, 'Boards', { byok });
-    return { credentials, refund };
+    await reserveCharge(req.user, jobId, { action, byok });
+    return { credentials };
   }
 
-  const { refund } = await consume(req.user, 'Messages', { byok: have.has('groq') });
-  return { credentials, refund };
+  await reserveCharge(req.user, jobId, { action, byok: have.has('groq') });
+  return { credentials };
 };
 
-/** Run `work`; give the quota unit back if it fails before producing anything. */
-const withRefund = async (refund, work) => {
+/** Settle once after completion, release on transport or pipeline failure. */
+const withSettlement = async (jobId, work) => {
+  let result;
   try {
-    return await work();
+    result = await work();
   } catch (error) {
-    await refund();
+    await settleCharge(jobId, null);
     throw error;
   }
+  const chargeResult = result?.data && typeof result.data === 'object'
+    ? { ...result.data, providerUsage: result.providerUsage || result.data.providerUsage }
+    : result;
+  await settleCharge(jobId, chargeResult);
+  return result;
 };
 
 // GET /api/v1/ai/providers — board generators as this user can use them.
@@ -73,10 +83,11 @@ export const providers = asyncHandler(async (req, res) => {
 
 // POST /api/v1/ai/chat
 export const chat = asyncHandler(async (req, res) => {
-  await getProject(req.body.projectId, req.user);
-  const { credentials, refund } = await prepareAiRequest(req);
+  await getProject(req.body.projectId, req.user, true);
+  const jobId = uuidv4();
+  const { credentials } = await prepareAiRequest(req, { jobId, action: 'chat' });
 
-  const result = await withRefund(refund, () =>
+  const result = await withSettlement(jobId, () =>
     callSupervisor({
       action: 'chat',
       project: req.body.projectId,
@@ -95,9 +106,11 @@ export const chat = asyncHandler(async (req, res) => {
 
 // POST /api/v1/ai/code-chat
 export const codeChat = asyncHandler(async (req, res) => {
-  const { credentials, refund } = await prepareAiRequest(req);
+  await getProject(req.body.projectId, req.user, true);
+  const jobId = uuidv4();
+  const { credentials } = await prepareAiRequest(req, { jobId, action: 'code-chat' });
 
-  const data = await withRefund(refund, () =>
+  const data = await withSettlement(jobId, () =>
     callCodeChat({ files: req.body.files || [], messages: req.body.messages || [], credentials, model: req.body.model })
   );
 
@@ -139,15 +152,22 @@ export const codeChat = asyncHandler(async (req, res) => {
 
 // POST /api/v1/ai/run
 export const run = asyncHandler(async (req, res) => {
+  if (env.billingEnabled) throw ApiError.badRequest('Use the queued /ai/run-stream endpoint for metered work');
+  if (req.body.action === 'generate_board') throw ApiError.badRequest('Use /ai/run-stream for board generation');
   const project = req.body.projectId
     ? await getProject(req.body.projectId, req.user, true)
     : null;
 
   const action = req.body.action || 'run_workflow';
-  const { credentials, refund } = await prepareAiRequest(req, { action, provider: req.body.provider });
-
   const jobId = uuidv4();
-  const result = await withRefund(refund, () =>
+  const { credentials } = await prepareAiRequest(req, { jobId, action, provider: req.body.provider });
+  try {
+    await AiJob.create({ jobId, user: req.user._id, project: project?._id, action, status: 'running' });
+  } catch (error) {
+    await settleCharge(jobId, null);
+    throw error;
+  }
+  const result = await withSettlement(jobId, () =>
     callSupervisor({
       action,
       project: project ? project.toObject() : {},
@@ -161,6 +181,7 @@ export const run = asyncHandler(async (req, res) => {
       audit: { userId: req.user._id, projectId: project?._id },
     })
   );
+  await AiJob.updateOne({ jobId }, { $set: { status: result?.error ? 'failed' : 'completed', result: result?.data || result } });
 
   await logActivity('ai_request', req.user._id, {
     action: req.body.action || 'run_workflow',
@@ -234,8 +255,11 @@ export const run = asyncHandler(async (req, res) => {
 
 // GET /api/v1/ai/status/:id
 export const status = asyncHandler(async (req, res) => {
+  const owned = await AiJob.findOne({ jobId: req.params.id, user: req.user._id });
+  if (!owned) throw ApiError.notFound('Job not found');
+  if (env.aiQueueEnabled) return send(res, { data: owned });
   const jobStatus = await getSupervisorStatus(req.params.id);
-  send(res, { data: jobStatus });
+  send(res, { data: jobStatus?.status === 'unknown' ? owned : jobStatus });
 });
 
 // GET /api/v1/ai/project/:projectId
@@ -252,7 +276,30 @@ export const projectArtifacts = asyncHandler(async (req, res) => {
 
 // POST /api/v1/ai/cancel
 export const cancel = asyncHandler(async (req, res) => {
+  const owned = await AiJob.findOne({ jobId: req.body.jobId, user: req.user._id });
+  if (!owned) throw ApiError.notFound('Job not found');
+  if (env.aiQueueEnabled) {
+    if (['completing', 'completed', 'failed', 'cancelled'].includes(owned.status)) {
+      return send(res, { data: { jobId: owned.jobId, status: owned.status } });
+    }
+    const cancelled = await AiJob.updateOne(
+      { jobId: owned.jobId, user: req.user._id, status: { $in: ['queued', 'running'] } },
+      { $set: { status: 'cancelled' }, $unset: { payload: 1 } }
+    );
+    if (!cancelled.modifiedCount) {
+      const latest = await AiJob.findOne({ jobId: owned.jobId, user: req.user._id });
+      return send(res, { data: { jobId: owned.jobId, status: latest.status } });
+    }
+    const queued = await aiQueue().getJob(owned.jobId);
+    if (queued) await queued.remove().catch(() => {});
+    await redisConnection().publish('dunkai-ai-cancel', owned.jobId);
+    await settleCharge(owned.jobId, null);
+    const { emitAIError } = await import('../sockets/index.js');
+    emitAIError(req.app.get('io'), owned.jobId, { jobId: owned.jobId, error: 'Job cancelled' });
+    return send(res, { data: { jobId: owned.jobId, status: 'cancelled' } });
+  }
   const result = await cancelSupervisorJob(req.body.jobId);
+  await AiJob.updateOne({ jobId: req.body.jobId }, { $set: { status: 'cancelled' } });
   send(res, { message: 'Job cancelled', data: result });
 });
 
@@ -273,28 +320,47 @@ export const runStream = asyncHandler(async (req, res) => {
   // Falls back to the project's own fields when no chat is scoped to this
   // run (only reachable from an older client that doesn't send chatId yet).
   const chat = req.body.chatId ? await getChat(req.body.chatId, req.user) : null;
+  if (chat && String(chat.project) !== String(project?._id)) throw ApiError.forbidden('Chat does not belong to this project');
+  if (env.billingEnabled && await AiJob.countDocuments({ user: req.user._id, status: { $in: ['queued', 'running', 'completing'] } }) >= 2) {
+    throw new ApiError(429, 'Two AI jobs are already running. Wait for one to finish.');
+  }
 
   // Metered before the job id exists, so a refused request (quota spent,
   // provider not available here) is a plain 4xx the client can show.
   const action = req.body.action || 'run_workflow';
-  const { credentials, refund } = await prepareAiRequest(req, { action, provider: req.body.provider });
-
   const jobId = uuidv4();
+  const { credentials } = await prepareAiRequest(req, { jobId, action, provider: req.body.provider });
+  try {
+    await AiJob.create({ jobId, user: req.user._id, project: project?._id, chat: chat?._id, action, status: env.aiQueueEnabled ? 'queued' : 'running' });
+  } catch (error) {
+    await settleCharge(jobId, null);
+    throw error;
+  }
   const io = req.app.get('io');
 
-  // The workflow's pcb_ir is never persisted — runStream writes no Document, so
-  // after a run it exists only in the browser's workspace store. Board
-  // generation needs it, so the client sends back the handoff it is holding.
-  // This is the user's own design data for a project they already passed the
-  // getProject/getChat access check on, so it crosses no privilege boundary;
-  // it is simply the only copy there is.
+  // Use the server-persisted chat/project snapshot for board generation.
+  // Browser-supplied pcbIr can be stale or from a different chat.
   const projectPayload = chat
     ? { ...chat.toObject(), project_name: project?.title, name: project?.title }
     : project
       ? project.toObject()
       : {};
-  if (req.body.pcbIr && typeof req.body.pcbIr === 'object') {
-    projectPayload.pcb_ir = req.body.pcbIr;
+
+  if (env.aiQueueEnabled) {
+    try {
+      await AiJob.updateOne({ jobId }, { $set: { payload: {
+        project: projectPayload,
+        messages: req.body.messages || [], files: req.body.files || [],
+        agentType: req.body.agentType, provider: req.body.provider, model: req.body.model,
+      } } });
+      await enqueueAiJob(jobId);
+    } catch (error) {
+      await settleCharge(jobId, null);
+      await AiJob.updateOne({ jobId }, { $set: { status: 'failed', error: 'Could not queue job' } });
+      throw error;
+    }
+    send(res, { status: 202, message: 'AI job queued', data: { jobId } });
+    return;
   }
 
   // Fire-and-forget: the stream runs in the background and emits
@@ -311,9 +377,18 @@ export const runStream = asyncHandler(async (req, res) => {
     jobId,
     chatId: chat?._id || null,
     audit: { userId: req.user._id, projectId: project?._id },
-  }).catch(async (err) => {
+  }).then(async (result) => {
+    try {
+      await settleCharge(jobId, result);
+      await AiJob.updateOne({ jobId }, { $set: { status: result?.error ? 'failed' : 'completed', result: result?.error ? null : result, error: result?.error || null } });
+    } catch (error) {
+      console.error(`[AI Stream] could not settle or save job ${jobId}:`, error.message);
+    }
+  }, async (err) => {
     console.error(`[AI Stream] job ${jobId} failed:`, err.message);
-    await refund();
+    await settleCharge(jobId, null).catch((settleErr) =>
+      console.error(`[AI Stream] credit release failed for ${jobId}:`, settleErr.message));
+    await AiJob.updateOne({ jobId }, { $set: { status: 'failed', error: err.message } }).catch(() => {});
   });
 
   await logActivity('ai_request', req.user._id, {

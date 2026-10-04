@@ -6,11 +6,16 @@
   "scripts": {
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
+    "start:worker": "node src/worker.js",
     "check": "node --check src/server.js && node --check src/app.js",
+    "test:credits": "BILLING_ENABLED=true STRIPE_SECRET_KEY=sk_test_dummy STRIPE_WEBHOOK_SECRET=whsec_dummy node --test test/credits.test.js",
     "lint": "eslint src/"
   },
   "dependencies": {
+    "@socket.io/redis-adapter": "^8.3.0",
+    "@socket.io/redis-emitter": "^5.1.0",
     "bcryptjs": "^2.4.3",
+    "bullmq": "^6.3.11",
     "cloudinary": "^2.6.0",
     "compression": "^1.8.0",
     "cookie-parser": "^1.4.7",
@@ -21,15 +26,19 @@
     "express-rate-limit": "^7.5.0",
     "express-validator": "^7.2.1",
     "helmet": "^8.0.0",
+    "ioredis": "^6.0.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.9.5",
     "morgan": "^1.10.0",
     "multer": "^1.4.5-lts.1",
+    "nodemailer": "^10.0.14",
     "socket.io": "^4.8.1",
+    "stripe": "^23.0.0",
     "swagger-ui-express": "^5.0.1",
     "uuid": "^11.1.0"
   },
   "devDependencies": {
-    "eslint": "^9.18.0"
+    "eslint": "^9.18.0",
+    "mongodb-memory-server": "^11.3.0"
   }
 }

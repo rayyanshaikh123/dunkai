@@ -51,7 +51,6 @@ const DOWNLOADS: Array<{ key: string; label: string }> = [
   { key: 'boardGlb', label: '3D model (.glb)' },
   { key: 'bomCsv', label: 'Bill of materials (.csv)' },
   { key: 'pickAndPlaceCsv', label: 'Pick and place (.csv)' },
-  { key: 'gerbersZip', label: 'Gerbers + drill (.zip)' },
   { key: 'designBrief', label: 'Design brief (.md)' },
   { key: 'resolution', label: 'Component resolution (.json)' },
 ]
@@ -328,9 +327,7 @@ export function PcbView({ projectId }: { projectId?: string } = {}) {
                   </a>
                 </DropdownMenuItem>
               ))}
-              {/* The Gerber set is offered as `gerbersZip` in the list above.
-                  It used to link `gerbersDir`, but express.static does not list
-                  directories, so that answered 301 and then 404. */}
+              {/* Fabrication export stays blocked until independent checks and approval. */}
             </DropdownMenuContent>
           </DropdownMenu>
 

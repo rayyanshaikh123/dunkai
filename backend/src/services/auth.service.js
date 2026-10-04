@@ -4,6 +4,7 @@ import { User } from '../models/User.js';
 import { Session } from '../models/Session.js';
 import { ActivityLog } from '../models/ActivityLog.js';
 import { ApiError } from '../utils/ApiError.js';
+import { sendPasswordResetEmail, sendVerificationEmail } from '../helpers/email.js';
 import {
   hashToken,
   signAccessToken,
@@ -63,15 +64,18 @@ export const register = async ({ name, email, password }, req = null) => {
   if (existing) throw ApiError.badRequest('Email is already registered');
 
   const hashedPassword = await bcrypt.hash(password, env.bcryptRounds);
-  const { hashedToken: verificationToken } = generateVerificationToken();
+  const { rawToken, hashedToken: verificationToken } = generateVerificationToken();
 
   const user = await User.create({
     name,
     email,
     password: hashedPassword,
     emailVerificationToken: verificationToken,
+    emailVerificationExpires: new Date(Date.now() + 24 * 60 * 60 * 1000),
     provider: 'local',
   });
+
+  await sendVerificationEmail(email, rawToken);
 
   await logActivity('register', user._id, { method: 'local' }, req);
   return issueTokens(user, req);
@@ -170,9 +174,7 @@ export const forgotPassword = async (email, req = null) => {
   user.resetPasswordExpires = expires;
   await user.save();
 
-  // Placeholder: In production, send email with reset link
-  // await sendEmail({ to: email, subject: 'Reset your password', html: `...${rawToken}...` })
-  console.info(`[Password Reset] Token for ${email}: ${rawToken} (expires ${expires.toISOString()})`);
+  await sendPasswordResetEmail(email, rawToken);
 
   await logActivity('password_reset', user._id, { requestedAt: new Date() }, req);
   return { sent: true };
@@ -223,11 +225,12 @@ export const changePassword = async (user, currentPassword, newPassword, req = n
 
 export const verifyEmail = async (token) => {
   const hashedToken = hashToken(token);
-  const user = await User.findOne({ emailVerificationToken: hashedToken });
+  const user = await User.findOne({ emailVerificationToken: hashedToken, emailVerificationExpires: { $gt: new Date() } });
   if (!user) throw ApiError.badRequest('Invalid verification token');
 
   user.isVerified = true;
   user.emailVerificationToken = undefined;
+  user.emailVerificationExpires = undefined;
   await user.save();
 
   return { verified: true };
@@ -236,14 +239,14 @@ export const verifyEmail = async (token) => {
 export const resendVerification = async (email) => {
   const user = await User.findOne({ email });
   if (!user) return { sent: true };
-  if (user.isVerified) throw ApiError.badRequest('Email is already verified');
+  if (user.isVerified) return { sent: true };
 
-  const { hashedToken } = generateVerificationToken();
+  const { rawToken, hashedToken } = generateVerificationToken();
   user.emailVerificationToken = hashedToken;
+  user.emailVerificationExpires = new Date(Date.now() + 24 * 60 * 60 * 1000);
   await user.save();
 
-  // Placeholder: send verification email
-  console.info(`[Email Verification] New token for ${email}: ${hashedToken}`);
+  await sendVerificationEmail(email, rawToken);
   return { sent: true };
 };
 

@@ -1,0 +1,128 @@
+services:
+  - type: web
+    name: dunkai-api
+    runtime: docker
+    plan: 0.5c-512mb
+    dockerfilePath: backend/Dockerfile
+    dockerContext: backend
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: BILLING_ENABLED
+        value: 'false'
+      - key: AI_QUEUE_ENABLED
+        value: 'true'
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: dunkai-jobs
+          property: connectionString
+      - key: MONGODB_URI
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: CLIENT_ORIGIN
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: SUPERVISOR_AGENT_URL
+        fromService:
+          type: pserv
+          name: dunkai-engine
+          property: hostport
+      - key: SUPERVISOR_AGENT_TOKEN
+        sync: false
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: BYOK_ENCRYPTION_KEY
+        generateValue: true
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: EMAIL_HOST
+        sync: false
+      - key: EMAIL_USER
+        sync: false
+      - key: EMAIL_PASS
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+    disk:
+      name: dunkai-api-uploads
+      mountPath: /app/uploads
+      sizeGB: 1
+
+  - type: pserv
+    name: dunkai-engine
+    runtime: docker
+    plan: 1c-2g
+    dockerfilePath: ai_engine/Dockerfile
+    dockerContext: .
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SUPERVISOR_AGENT_TOKEN
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: HF_TOKEN_READ
+        sync: false
+      - key: DESIGNER_PROVIDER
+        value: groq
+      - key: BOARD_SANDBOX_REQUIRED
+        value: 'true'
+    disk:
+      name: dunkai-engine-data
+      mountPath: /data
+      sizeGB: 10
+
+  - type: keyvalue
+    name: dunkai-jobs
+    plan: 256mb
+    ipAllowList: []
+
+  - type: worker
+    name: dunkai-ai-worker
+    runtime: docker
+    plan: 0.5c-512mb
+    dockerfilePath: backend/Dockerfile
+    dockerContext: backend
+    dockerCommand: node src/worker.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DUNKAI_WORKER
+        value: 'true'
+      - key: BILLING_ENABLED
+        value: 'false'
+      - key: AI_QUEUE_ENABLED
+        value: 'true'
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: dunkai-jobs
+          property: connectionString
+      - key: MONGODB_URI
+        fromService:
+          type: web
+          name: dunkai-api
+          envVarKey: MONGODB_URI
+      - key: SUPERVISOR_AGENT_URL
+        fromService:
+          type: pserv
+          name: dunkai-engine
+          property: hostport
+      - key: SUPERVISOR_AGENT_TOKEN
+        fromService:
+          type: web
+          name: dunkai-api
+          envVarKey: SUPERVISOR_AGENT_TOKEN
+      - key: BYOK_ENCRYPTION_KEY
+        fromService:
+          type: web
+          name: dunkai-api
+          envVarKey: BYOK_ENCRYPTION_KEY

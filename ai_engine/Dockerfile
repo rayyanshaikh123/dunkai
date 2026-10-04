@@ -5,6 +5,8 @@
 #
 #   docker build -f ai_engine/Dockerfile -t dunkai-ai-engine .
 FROM python:3.12-slim
+RUN apt-get update && apt-get install -y --no-install-recommends bubblewrap \
+ && rm -rf /var/lib/apt/lists/*
 
 # Node runs dunkai-designer (board generation). Copied from the official image
 # rather than installed from a distro repo, so the version is pinned.

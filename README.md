@@ -4,6 +4,8 @@ Dunk AI is an AI-powered hardware copilot that turns a natural-language hardware
 
 The platform combines a Next.js web workspace, a Node.js API backend, and a Python AI engine. Users describe what they want to build, collaborate through project chat, and receive engineering outputs such as requirements, architecture, component recommendations, circuit and PCB guidance, validation results, and documentation.
 
+The INR credit and PCB launch implementation is documented in [the launch runbook](docs/LAUNCH_RUNBOOK.md) and [the audit and pricing plan](docs/PCB_CREDITS_LAUNCH_PLAN.md). Billing is disabled in the Render blueprint until its payment, security, and PCB release checks pass. Fabrication files are blocked pending independent checks and human approval.
+
 ## Architecture
 
 ![Dunk AI system architecture](docs/dunk-ai-architecture.png)
@@ -117,20 +119,11 @@ Users can add their own **Groq**, **Gemini** and **Anthropic** keys in Settings 
 
 - A key is verified with the provider when saved, encrypted with AES-256-GCM (`BYOK_ENCRYPTION_KEY`), and never returned to the browser except as `gsk_…a1b2`.
 - At run time the backend decrypts it into the supervisor request only. The AI engine applies it per request through a context variable (`ai_engine/agents/credentials.py`), never through `os.environ`, so concurrent users never see each other's keys. The designer subprocess gets it in its own environment copy.
-- Work paid for by the user's key never counts toward their plan.
+- A user's key pays its provider tokens. When credits are enabled, pipeline compute is 10 credits and board compute/export is 20 credits.
 
 ## Plans
 
-Defined once in `backend/src/config/plans.js` and enforced only when `BILLING_ENABLED=true`:
-
-| | Free | Pro | Enterprise |
-| --- | --- | --- | --- |
-| Hosted AI messages / month | 50 | 1,000 | unlimited |
-| Hosted board generations / month | 3 | 40 | unlimited |
-| Active projects | 3 | unlimited | unlimited |
-| Board models on hosted keys | Groq, Gemini, Ollama | + Claude Sonnet | + Claude Code |
-
-"Hosted" means the operator's provider keys. With your own key there is no limit on any plan.
+Freemium with prepaid INR credits is configured in `backend/src/config/credits.js`. A verified account receives 150 one-time trial credits and five hosted AI chat turns per UTC month. Packs are 200 credits/₹200, 500/₹500, and 1,500/₹1,500. Chat, pipeline, and Groq board runs quote 2, 30, and 101 credits respectively; BYOK pipeline and board compute quote 10 and 20. Credits are enforced only when `BILLING_ENABLED=true`. See the [launch runbook](docs/LAUNCH_RUNBOOK.md) before turning that switch on.
 
 ## Main API groups
 
@@ -142,7 +135,7 @@ Defined once in `backend/src/config/plans.js` and enforced only when `BILLING_EN
 | `/api/v1/files` | Project file uploads and listings |
 | `/api/v1/ai` | WebSocket streaming and Supervisor integration |
 | `/api/v1/account` | BYOK key management |
-| `/api/v1/billing` | Plans, usage, and admin plan changes |
+| `/api/v1/billing` | Credit packs, wallet, quote, checkout, and signed Stripe webhook |
 
 ## Engineering principles
 

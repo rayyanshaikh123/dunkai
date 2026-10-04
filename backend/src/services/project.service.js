@@ -4,6 +4,11 @@ import { parsePagination, buildPaginatedResponse } from '../helpers/pagination.j
 import { logActivity } from '../helpers/activity.js';
 import { notify } from '../helpers/notification.js';
 import { assertCanCreateProject } from './billing.service.js';
+import { env } from '../config/env.js';
+
+const EDITABLE_FIELDS = ['title', 'description', 'tags', 'status', 'isFavourite'];
+const ARTIFACT_FIELDS = ['requirements', 'architecture', 'bom', 'eda_data', 'pcb_ir', 'validation',
+  'handoff_validation', 'documentation', 'code_generation', 'board'];
 
 // ---- Access control ----
 
@@ -78,7 +83,9 @@ export const getFavouriteProjects = (user) =>
 export const createProject = async (data, user, req = null) => {
   await assertCanCreateProject(user);
   const project = await Project.create({
-    ...data,
+    title: data.title,
+    description: data.description,
+    tags: data.tags,
     owner: user._id,
   });
 
@@ -90,12 +97,12 @@ export const createProject = async (data, user, req = null) => {
 
 export const updateProject = async (id, data, user, req = null) => {
   const project = await getProject(id, user, true);
-  Object.assign(project, data);
+  const allowed = env.billingEnabled ? EDITABLE_FIELDS : [...EDITABLE_FIELDS, 'currentStage', ...ARTIFACT_FIELDS];
+  for (const key of allowed) if (Object.hasOwn(data, key)) project[key] = data[key];
 
   // Mongoose Mixed-type fields need explicit markModified() for change detection
-  const mixedFields = ['requirements', 'architecture', 'bom', 'eda_data', 'pcb_ir', 'validation', 'handoff_validation', 'documentation', 'code_generation', 'board'];
-  for (const field of mixedFields) {
-    if (field in data) {
+  for (const field of ARTIFACT_FIELDS) {
+    if (!env.billingEnabled && Object.hasOwn(data, field)) {
       project.markModified(field);
     }
   }

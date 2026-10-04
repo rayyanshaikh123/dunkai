@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useWorkspaceStore, type PendingAction, type AiOutput, type BoardArtifact } from '@/lib/store'
 import { ModelSelector } from './model-selector'
-import { aiApi, chatApi, fileApi } from '@/lib/api'
+import { aiApi, billingApi, chatApi, fileApi } from '@/lib/api'
 import { useUpdateProject } from '@/hooks/use-projects'
 import { useUpdateChatArtifacts } from '@/hooks/use-chats'
 import { useBoardGeneration } from '@/hooks/use-board-generation'
@@ -109,7 +109,7 @@ const placeholderPrompts = [
 // the failure wording is identical whether the run died before it got a jobId
 // or after.
 const BOARD_STARTING = 'Generating PCB...'
-const BOARD_DONE = 'PCB generated — open the PCB tab for the layout, the 3D board and the manufacturing files.'
+const BOARD_DONE = 'PCB preview generated — open the PCB tab for the layout and 3D board. Fabrication export awaits independent checks.'
 const boardFailure = (error: string | null) => `⚠️ PCB generation failed: ${error ?? 'unknown error'}`
 
 export function ChatInterface({ projectId }: { projectId: string }) {
@@ -147,6 +147,10 @@ export function ChatInterface({ projectId }: { projectId: string }) {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
+  const [billingEnabled, setBillingEnabled] = useState(false)
+  useEffect(() => {
+    billingApi.plans().then((plans) => setBillingEnabled(plans.billingEnabled)).catch(() => {})
+  }, [])
   const [placeholder, setPlaceholder] = useState('')
   const [placeholderIndex, setPlaceholderIndex] = useState(0)
   const [selectedOptions, setSelectedOptions] = useState<string[]>([])
@@ -418,15 +422,6 @@ export function ChatInterface({ projectId }: { projectId: string }) {
         }
       }
 
-      // Save user message to MongoDB
-      if (targetChatId) {
-        try {
-          await chatApi.saveMessage(targetChatId, 'user', request)
-        } catch {
-          // Ignore save error to allow streaming
-        }
-      }
-
       try {
         const res = await aiApi.runStream({
           projectId,
@@ -439,6 +434,12 @@ export function ChatInterface({ projectId }: { projectId: string }) {
           ],
         })
         const jobId = res?.jobId
+
+        // Persist the message only after the server accepts the quoted job.
+        // A 402 must not leave an unanswered turn in the chat history.
+        if (targetChatId) {
+          chatApi.saveMessage(targetChatId, 'user', request).catch(() => {})
+        }
 
         if (!jobId) {
           const chatRes = (await aiApi.chat(projectId, request)) as { reply?: string }
@@ -871,7 +872,8 @@ export function ChatInterface({ projectId }: { projectId: string }) {
         </Button>
       </div>
       <p className="mt-3 text-center text-[11px] text-muted-foreground">
-        DunkAI can make mistakes. Review generated engineering decisions before manufacturing.
+        {billingEnabled && 'Design runs reserve up to 30 credits; an automatic PCB build reserves up to 101 more. '}
+        Review generated engineering decisions before manufacturing.
       </p>
     </div>
   )

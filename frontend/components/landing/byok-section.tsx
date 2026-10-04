@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { BadgeCheck, EyeOff, Infinity as InfinityIcon, Lock } from "lucide-react";
+import { BadgeCheck, EyeOff, Coins, Lock } from "lucide-react";
 
 const PROVIDERS = [
   { name: "Groq", use: "Design chat and all six agents", color: "#f55036" },
@@ -11,7 +11,7 @@ const PROMISES = [
   { icon: BadgeCheck, title: "Verified on save", body: "We make one read-only call to the provider, so a typo fails now, not three minutes into a run." },
   { icon: Lock, title: "Encrypted at rest", body: "AES-256-GCM, decrypted only for the request that uses it, and only on our servers." },
   { icon: EyeOff, title: "Never sent back", body: "Your browser only ever sees the last four characters. Remove a key any time." },
-  { icon: InfinityIcon, title: "Never counted", body: "Runs on your own key don't touch your plan's limits. Use it as much as you like." },
+  { icon: Coins, title: "Compute only", body: "Your key pays the model provider. Pipeline and board compute use fewer DunkAI credits." },
 ];
 
 export function ByokSection() {
@@ -25,11 +25,10 @@ export function ByokSection() {
               <h2 className="mt-2 text-4xl font-semibold tracking-[-0.03em] sm:text-[44px] sm:leading-[1.08]">
                 Your models.
                 <br />
-                <span className="text-soft">No usage limits.</span>
+                <span className="text-soft">Your model bill.</span>
               </h2>
               <p className="mt-4 max-w-md text-lg text-muted-foreground">
-                Every plan includes hosted AI. Add your own provider key and everything that key powers runs on your
-                account instead, with no cap from us.
+                Add your own provider key to pay that provider directly. DunkAI charges only the disclosed compute credits for pipeline and board jobs.
               </p>
 
               <ul className="mt-8 space-y-3">

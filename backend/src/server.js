@@ -4,6 +4,7 @@ import { app } from './app.js';
 import { env } from './config/env.js';
 import { connectDatabase } from './config/database.js';
 import { initSocket } from './sockets/index.js';
+import { reconcileStaleJobs } from './services/reconcile.service.js';
 
 // Opt-in only. Forcing public resolvers fixed `mongodb+srv` lookups on one
 // local network, but on a host it breaks every private name: docker-compose
@@ -13,6 +14,8 @@ if (env.dnsServers.length) dns.setServers(env.dnsServers);
 const start = async () => {
   try {
     await connectDatabase();
+    reconcileStaleJobs().catch((error) => console.error('Job reconciliation failed:', error));
+    setInterval(() => reconcileStaleJobs().catch((error) => console.error('Job reconciliation failed:', error)), 5 * 60 * 1000).unref();
 
     const server = http.createServer(app);
 

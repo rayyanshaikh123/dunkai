@@ -4,15 +4,14 @@ import cors from 'cors';
 import morgan from 'morgan';
 import compression from 'compression';
 import cookieParser from 'cookie-parser';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import swaggerUi from 'swagger-ui-express';
 
 import { env } from './config/env.js';
 import { corsOptions, generalLimiter, sanitizeMongo } from './middleware/security.js';
 import { notFound, errorHandler } from './middleware/error.js';
 import { send } from './utils/response.js';
-import { proxyBoardArtifact } from './services/supervisor.service.js';
+import { boardArtifact, uploadArtifact } from './controllers/artifact.controller.js';
+import { authenticate } from './middleware/auth.js';
 
 // Routes
 import { authRoutes } from './routes/auth.routes.js';
@@ -24,10 +23,9 @@ import { documentRoutes } from './routes/document.routes.js';
 import { notificationRoutes } from './routes/notification.routes.js';
 import { accountRoutes } from './routes/account.routes.js';
 import { billingRoutes } from './routes/billing.routes.js';
+import { webhook as stripeWebhook } from './controllers/billing.controller.js';
 import { firmwareRoutes } from './routes/firmware.routes.js';
 import { openapi } from './docs/openapi.js';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export const app = express();
 
@@ -39,18 +37,17 @@ app.set('trust proxy', env.trustProxy);
 app.use(helmet());
 app.use(cors(corsOptions));
 app.use(compression());
+// Signature verification requires the exact bytes Stripe sent.
+app.post('/api/v1/billing/webhook', express.raw({ type: 'application/json' }), stripeWebhook);
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 app.use(sanitizeMongo());
 
-// Serve uploaded files statically
-app.use('/uploads', express.static(path.resolve(env.uploadDir)));
-
-// Generated boards are written by the AI engine. When it shares this disk
-// (one host, or a shared volume) the static mount above serves them; when it
-// runs on its own host, they are not here, and this asks the engine instead.
-app.get('/uploads/boards/*', proxyBoardArtifact);
+// Every local upload and board artifact requires project access. The old
+// express.static mount disclosed private designs to anyone with a URL.
+app.get('/uploads/boards/*', authenticate, boardArtifact);
+app.get('/uploads/:name', authenticate, uploadArtifact);
 
 // ---- Logging ----
 app.use(morgan(env.isProduction ? 'combined' : 'dev'));

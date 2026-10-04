@@ -22,6 +22,10 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
+try:
+    from ..usage_meter import USAGE_CALLBACK, capture_usage
+except ImportError:
+    from usage_meter import USAGE_CALLBACK, capture_usage
 
 try:
     from ..credentials import api_key, groq_api_key, use_credentials
@@ -88,6 +92,8 @@ def require_backend(authorization: str | None = Header(default=None)) -> None:
 
 @app.on_event("startup")
 def startup_event():
+    if os.getenv("NODE_ENV") == "production" and not _SUPERVISOR_TOKEN:
+        raise RuntimeError("SUPERVISOR_AGENT_TOKEN is required in production")
     if not _SUPERVISOR_TOKEN:
         logger.warning("SUPERVISOR_AGENT_TOKEN is not set: the supervisor accepts unauthenticated requests. "
                        "Set it (and the same value on the backend) before exposing this service.")
@@ -417,7 +423,7 @@ def capabilities() -> dict[str, Any]:
         "data": {
             "platform_keys": {name: bool(api_key(name)) for name in _KEYED_BOARD_PROVIDERS},
             "board_providers": board,
-            "default_board_provider": os.getenv("DESIGNER_PROVIDER") or "claude-code",
+            "default_board_provider": os.getenv("DESIGNER_PROVIDER") or "groq",
         }
     }
 
@@ -439,8 +445,10 @@ def board_artifact(artifact_path: str):
 
 @app.post("/api/v1/supervisor", dependencies=[Depends(require_backend)])
 def supervisor_endpoint(payload: SupervisorRequest) -> dict[str, Any]:
-    with use_credentials(payload.credentials):
-        return _supervisor_dispatch(payload)
+    with use_credentials(payload.credentials), capture_usage() as usage:
+        result = _supervisor_dispatch(payload)
+        result["providerUsage"] = usage
+        return result
 
 
 def _supervisor_dispatch(payload: SupervisorRequest) -> dict[str, Any]:
@@ -454,6 +462,12 @@ def _supervisor_dispatch(payload: SupervisorRequest) -> dict[str, Any]:
 
     if action == "run_workflow":
         initial_state = _build_initial_state(payload)
+        inferred = _infer_single_node_action(initial_state.get("user_input") or "", initial_state)
+        if inferred:
+            logger.info("Routing run_workflow -> %s based on message intent (jobId=%s)", inferred, job_id)
+            checked = _run_single_node_fn(safety_node, initial_state)
+            final_state = checked if checked.get("workflow_status") == "blocked" else _run_single_node(inferred, checked)
+            return {"data": _serialize_state(final_state), "jobId": job_id, "status": "completed"}
         final_state = run_workflow(initial_state)
         return {"data": _serialize_state(final_state), "jobId": job_id, "status": "completed"}
 
@@ -561,8 +575,14 @@ def _stream_generator(payload: SupervisorRequest):
     keepalive pump thread, which calls ``next()`` from one context throughout,
     so the value set here is the one every node of this run sees.
     """
-    with use_credentials(payload.credentials):
-        yield from _stream_events(payload)
+    with use_credentials(payload.credentials), capture_usage() as usage:
+        for chunk in _stream_events(payload):
+            if chunk.startswith(("event: complete\n", "event: error\n")):
+                event, data_line, *_ = chunk.split("\n")
+                data = json.loads(data_line.removeprefix("data: "))
+                data["providerUsage"] = list(usage)
+                chunk = _sse_event(data, event.removeprefix("event: "))
+            yield chunk
 
 
 def _interface_revision_instruction(state: CircuitState) -> str | None:
@@ -666,11 +686,13 @@ def _stream_events(payload: SupervisorRequest):
         return
 
     action = payload.action or "run_workflow"
+    inferred_action = False
     if action == "run_workflow":
         inferred = _infer_single_node_action(initial_state.get("user_input") or "", initial_state)
         if inferred:
             logger.info("Routing run_workflow -> %s based on message intent (jobId=%s)", inferred, job_id)
             action = inferred
+            inferred_action = True
 
     # A targeted revision: run exactly one stage and stop, instead of the
     # full graph cascading through everything downstream of it. This is what
@@ -680,6 +702,19 @@ def _stream_events(payload: SupervisorRequest):
         node_name = _SINGLE_NODE_TO_GRAPH_NAME.get(action, action)
         label = _NODE_LABELS.get(node_name, node_name)
         yield _sse_event({"jobId": job_id, "node": "__start__", "label": "Pipeline starting"}, event="progress")
+        if inferred_action:
+            try:
+                initial_state = _run_single_node_fn(safety_node, initial_state)
+            except Exception as exc:
+                logger.exception("Safety gate failed")
+                yield _sse_event({"jobId": job_id, "error": str(exc), "node": "safety"}, event="error")
+                return
+            if initial_state.get("workflow_status") == "blocked":
+                yield _sse_event(
+                    {"jobId": job_id, "data": _serialize_state(initial_state), "status": "completed"},
+                    event="complete",
+                )
+                return
         yield _sse_event(
             {"jobId": job_id, "node": node_name, "label": label, "status": "running", "errors": []},
             event="progress",
@@ -847,11 +882,13 @@ class CodeChatResponse(BaseModel):
     # strips it before the response reaches the browser, and stores it.
     safety_audit: dict[str, Any] | None = None
 
-@app.post("/api/v1/supervisor/code-chat", response_model=CodeChatResponse, dependencies=[Depends(require_backend)])
+@app.post("/api/v1/supervisor/code-chat", dependencies=[Depends(require_backend)])
 def code_chat_endpoint(req: CodeChatRequest):
     """Specific endpoint for iterative code editing using Groq."""
-    with use_credentials(req.credentials):
-        return _code_chat(req)
+    with use_credentials(req.credentials), capture_usage() as usage:
+        result = _code_chat(req).model_dump()
+        result["providerUsage"] = usage
+        return result
 
 
 def _code_chat(req: CodeChatRequest) -> CodeChatResponse:
@@ -871,7 +908,7 @@ def _code_chat(req: CodeChatRequest) -> CodeChatResponse:
 
     default_model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
     model = req.model if req.model in CODE_CHAT_MODELS else default_model
-    llm = ChatGroq(model=model, temperature=0.1, api_key=groq_api_key())
+    llm = ChatGroq(model=model, temperature=0.1, api_key=groq_api_key(), callbacks=[USAGE_CALLBACK])
     # gpt-oss needs method="json_schema": its Harmony tool-call format breaks the
     # "function_calling" method (it calls a tool literally named "json" and
     # LangChain rejects it as tool_use_failed) -- same fix as requirement_agent.py.

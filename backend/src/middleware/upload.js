@@ -22,14 +22,10 @@ const fileFilter = (_req, file, cb) => {
     'image/png',
     'image/gif',
     'image/webp',
-    'image/svg+xml',
     'application/pdf',
     'text/plain',
     'application/json',
     'text/csv',
-    'application/vnd.ms-excel',
-    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    'application/zip',
   ];
 
   if (allowedMimes.includes(file.mimetype)) {

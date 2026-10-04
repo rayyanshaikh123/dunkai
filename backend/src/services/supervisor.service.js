@@ -8,7 +8,8 @@ const supervisorHeaders = (extra = {}) => ({
   ...(env.supervisorToken ? { authorization: `Bearer ${env.supervisorToken}` } : {}),
 });
 
-const supervisorUrl = (suffix = '') => new URL(`${env.supervisorPath}${suffix}`, env.supervisorUrl);
+const supervisorBase = /^https?:\/\//i.test(env.supervisorUrl) ? env.supervisorUrl : `http://${env.supervisorUrl}`;
+const supervisorUrl = (suffix = '') => new URL(`${env.supervisorPath}${suffix}`, supervisorBase);
 
 // In-memory store for AI job status (replace with Redis in production)
 const jobStore = new Map();
@@ -288,7 +289,7 @@ const parseSSEBuffer = (buffer) => {
 };
 
 /**
- * Write a completed run's board state onto its Chat session (or, absent a
+ * Write a completed run's design and board state onto its Chat session (or, absent a
  * chatId, its Project — see the fallback note in ai.controller.js#runStream).
  *
  * Every other artifact a run produces is persisted by the browser through
@@ -306,7 +307,7 @@ const parseSSEBuffer = (buffer) => {
  * screen. `{}` rather than null is the "untouched" value the rest of the
  * Mixed fields use.
  */
-const persistBoardState = async (project, chatId, result) => {
+const persistBoardState = async (project, chatId, result, audit, jobId) => {
   const projectId = project?._id;
   if (!result || typeof result !== 'object') return;
   if (!chatId && !projectId) return;
@@ -314,21 +315,41 @@ const persistBoardState = async (project, chatId, result) => {
   const board = result.board;
   const hasBoard = board && typeof board === 'object';
   const componentsReplaced = Boolean(result.bom || result.pcb_ir);
-  if (!hasBoard && !componentsReplaced) return;
+  const artifactKeys = [
+    'requirements', 'architecture', 'bom', 'eda_data', 'pcb_ir', 'validation',
+    'handoff_validation', 'documentation', 'code_generation',
+  ];
+  const fields = Object.fromEntries(artifactKeys.filter((key) => result[key] && typeof result[key] === 'object')
+    .map((key) => [key, result[key]]));
+  if (hasBoard || componentsReplaced) fields.board = hasBoard ? board : {};
+  if (!Object.keys(fields).length) return true;
 
   try {
+    if (hasBoard) {
+      const { BoardArtifact } = await import('../models/BoardArtifact.js');
+      const firstUrl = Object.values(board.urls || {}).find((url) => typeof url === 'string' && url.startsWith('/uploads/boards/'));
+      const directory = firstUrl?.split('/')[3];
+      if (!directory || !audit?.userId || !projectId) throw new Error('Board has no authorized artifact directory');
+      await BoardArtifact.updateOne({ jobId }, { $setOnInsert: {
+        jobId, directory, user: audit.userId, project: projectId, chat: chatId || null,
+        urls: board.urls, stats: board.stats || {},
+      } }, { upsert: true });
+      delete board.out_dir;
+    }
     if (chatId) {
       const { Chat } = await import('../models/Chat.js');
-      await Chat.updateOne({ _id: chatId }, { $set: { board: hasBoard ? board : {} } });
+      await Chat.updateOne({ _id: chatId }, { $set: fields });
     } else {
       const { Project } = await import('../models/Project.js');
-      await Project.updateOne({ _id: projectId }, { $set: { board: hasBoard ? board : {} } });
+      await Project.updateOne({ _id: projectId }, { $set: fields });
     }
   } catch (error) {
     // A board that is on screen but unsaved is a bad outcome, but it is not
     // worth tearing down the stream the user is currently watching.
     console.error(`[AI Stream] could not persist board for chat=${chatId} project=${projectId}:`, error.message);
+    return false;
   }
+  return true;
 };
 
 /**
@@ -362,6 +383,8 @@ export const callSupervisorStream = async (
     credentials = null,
     chatId = null,
     audit = {},
+    onComplete = null,
+    signal = null,
   }
 ) => {
   setJobStatus(jobId, 'running');
@@ -372,7 +395,7 @@ export const callSupervisorStream = async (
     response = await fetch(supervisorUrl('/stream'), {
       method: 'POST',
       headers: supervisorHeaders({ 'content-type': 'application/json' }),
-      // No signal / no timeout — the stream lives as long as the pipeline runs.
+      signal,
       body: JSON.stringify(
         buildSupervisorBody({ action, project, messages, files, jobId, agentType, provider, model, credentials })
       ),
@@ -418,12 +441,21 @@ export const callSupervisorStream = async (
         } else if (event === 'complete') {
           // Stripped before the emit: the socket goes straight to the browser.
           const safetyAudit = takeSafetyAudit(data);
+          finalResult = data.data || data;
+          finalResult.providerUsage = data.providerUsage || [];
+          const persisted = await persistBoardState(project, chatId, finalResult, audit, jobId);
+          if (!persisted) {
+            const { emitAIError } = await import('../sockets/index.js');
+            const failure = { jobId, error: 'Could not save the generated design', node: 'persistence' };
+            emitAIError(io, jobId, failure);
+            setJobStatus(jobId, 'failed', failure);
+            return failure;
+          }
+          if (onComplete) await onComplete(finalResult);
           const { emitAIComplete } = await import('../sockets/index.js');
           emitAIComplete(io, jobId, data);
           await persistSafetyAudit(safetyAudit, { ...audit, chatId, jobId });
-          finalResult = data.data || data;
           setJobStatus(jobId, 'completed', finalResult);
-          await persistBoardState(project, chatId, finalResult);
         }
       }
     }
@@ -518,7 +550,7 @@ export const proxyBoardArtifact = async (req, res, next) => {
       const value = upstream.headers.get(header);
       if (value) res.setHeader(header, value);
     }
-    res.setHeader('cache-control', 'public, max-age=3600');
+    res.setHeader('cache-control', 'private, no-store');
     Readable.fromWeb(upstream.body).pipe(res);
   } catch {
     next();

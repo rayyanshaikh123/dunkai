@@ -207,6 +207,10 @@ def parse_verdict(text: str) -> dict[str, Any]:
 def _call_model(model: str, transcript: str) -> str:
     from langchain_core.messages import HumanMessage, SystemMessage
     from langchain_groq import ChatGroq
+    try:
+        from .usage_meter import USAGE_CALLBACK
+    except ImportError:
+        from usage_meter import USAGE_CALLBACK
 
     try:
         from credentials import groq_api_key
@@ -224,6 +228,7 @@ def _call_model(model: str, transcript: str) -> str:
         max_tokens=2000,
         max_retries=1,
         model_kwargs={"response_format": {"type": "json_object"}},
+        callbacks=[USAGE_CALLBACK],
     )
     reply = llm.invoke([SystemMessage(content=PROMPT), HumanMessage(content=transcript)])
     return str(reply.content or "")

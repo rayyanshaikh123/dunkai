@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import {
@@ -24,6 +24,7 @@ import {
 } from '@/components/ui/table';
 import { useWorkspaceStore } from '@/lib/store';
 import { useBoardGeneration } from '@/hooks/use-board-generation';
+import { billingApi } from '@/lib/api';
 
 interface BOMViewProps {
   projectId: string;
@@ -119,6 +120,10 @@ export function BOMView({ projectId }: BOMViewProps) {
   const activeChatId = useWorkspaceStore((s) => s.activeChatId);
   const bom = aiOutput?.bom as BomData | null | undefined;
   const [currency, setCurrency] = useState<'INR' | 'USD'>('USD');
+  const [billingEnabled, setBillingEnabled] = useState(false);
+  useEffect(() => {
+    billingApi.plans().then((plans) => setBillingEnabled(plans.billingEnabled)).catch(() => {});
+  }, []);
 
   // Component selection finishes here, so this is where the board gets built.
   // The model used here is the Settings default ("Default agent/model for PCB
@@ -273,7 +278,7 @@ export function BOMView({ projectId }: BOMViewProps) {
                   ) : (
                     <CircuitBoard className="w-4 h-4 mr-2" />
                   )}
-                  {job.status === 'running' ? 'Generating…' : 'Generate PCB'}
+                  {job.status === 'running' ? 'Generating…' : billingEnabled ? 'Generate PCB · up to 101 credits' : 'Generate PCB'}
                 </Button>
               )}
             </div>

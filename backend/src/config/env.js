@@ -89,8 +89,10 @@ export const env = Object.freeze({
   // Billing. Off by default, so local and self-hosted installs have no quotas.
   // The hosted service sets BILLING_ENABLED=true.
   billingEnabled: asBoolean(process.env.BILLING_ENABLED || 'false'),
-  billingCheckoutUrlPro: process.env.BILLING_CHECKOUT_URL_PRO || '',
-  billingContactUrl: process.env.BILLING_CONTACT_URL || 'mailto:sales@dunkai.io',
+  stripeSecretKey: process.env.STRIPE_SECRET_KEY || '',
+  stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET || '',
+  redisUrl: process.env.REDIS_URL || '',
+  aiQueueEnabled: asBoolean(process.env.AI_QUEUE_ENABLED || 'false'),
 
   // Cloudinary
   cloudinaryCloudName: process.env.CLOUDINARY_NAME || '',
@@ -133,5 +135,5 @@ if (isProduction && !env.byokEncryptionKey) {
   throw new Error('BYOK_ENCRYPTION_KEY must be configured in production (encrypts users\' API keys at rest)');
 }
 if (isProduction && !env.supervisorToken) {
-  console.warn('[env] SUPERVISOR_AGENT_TOKEN is not set: the AI engine will accept unauthenticated requests.');
+  throw new Error('SUPERVISOR_AGENT_TOKEN must be configured in production');
 }

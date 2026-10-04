@@ -26,6 +26,22 @@ const q = (value) => JSON.stringify(String(value))
  * @returns {{ boardTsx: string, indexTsx: string, nets: string[] }}
  */
 export function emitBoard(design, resolutions, mapping, size = {}, support = []) {
+  // Names become tscircuit identifiers below. Distinct input nets must never
+  // collapse to one identifier: that would silently join separate copper nets.
+  const originalByIdentifier = new Map()
+  const checkNet = (name) => {
+    const original = String(name)
+    const identifier = NET_NAME(original)
+    const existing = originalByIdentifier.get(identifier)
+    if (existing !== undefined && existing !== original) {
+      throw new Error(`net names ${JSON.stringify(existing)} and ${JSON.stringify(original)} both become ${JSON.stringify(identifier)}`)
+    }
+    originalByIdentifier.set(identifier, original)
+  }
+  for (const net of design.nets) checkNet(net.name)
+  for (const pins of Object.values(mapping.assignments)) Object.values(pins).forEach(checkNet)
+  for (const part of support) Object.values(part.connections).forEach(checkNet)
+
   const c = design.constraints
   const width = size.widthMm ?? c.board_outline.width_mm
   const height = size.heightMm ?? c.board_outline.height_mm

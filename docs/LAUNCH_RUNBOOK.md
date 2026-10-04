@@ -1,0 +1,26 @@
+# PCB credits launch runbook
+
+## Current state
+
+The app has code for freemium credits, INR Stripe Checkout, a transactional MongoDB wallet, a Redis queue/worker, authenticated design artifacts, and a Render blueprint. `BILLING_ENABLED=false` in `render.yaml`; purchases and trial grants remain unavailable until the gates below are verified. Gerber ZIP delivery is blocked, including for paid users. The published operation debits are fixed at 2 chat, 30 pipeline, and 101 hosted Groq board credits (10/20 for BYOK pipeline/board). The backend records provider token usage, but it does not yet calculate debits from real provider cost. The estimates in `PCB_CREDITS_LAUNCH_PLAN.md` are planning examples, not measured margins.
+
+## Provisioning
+
+1. Create MongoDB Atlas as a replica set, with backups and a restricted network path. Run the backend against the intended database; billing startup rejects a standalone MongoDB. Preserve `BYOK_ENCRYPTION_KEY` permanently or user keys become unreadable.
+2. Create the Render Blueprint from `render.yaml`: public API, private Python engine, Redis Key Value, and AI worker. The engine owns board output at `/data/boards`; the API proxies authorized board files from the private service. Set `SUPERVISOR_AGENT_TOKEN` to the **same value** on API and engine, and supply the engine's Groq and Hugging Face keys. Verify the private engine is unreachable from the internet.
+3. Set the Vercel project root to `frontend/`. Set `BACKEND_URL=https://<Render API host>` in the Vercel **build** environment and `NEXT_PUBLIC_BACKEND_URL` to the same public API URL for sockets. Set API `FRONTEND_URL`, `CLIENT_ORIGIN`, and `CORS_ORIGINS` to the exact Vercel origin. Configure Google OAuth callback at `https://<Vercel host>/api/v1/auth/google/callback` if Google sign-in is used.
+4. Configure API SMTP (`EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USER`, `EMAIL_PASS`, `EMAIL_FROM`) and test registration, email verification, resend, and password reset. Verified email or Google identity is required for the trial grant. Then complete activation in the Indian Stripe account and review tax and invoice treatment. Set `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` on the API. Subscribe the endpoint `https://<Render API host>/api/v1/billing/webhook` to `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `charge.refunded`, and `charge.dispute.created`. Use test keys and the matching test webhook secret first. The browser's success redirect never grants credits.
+5. Confirm the API disk persists uploaded files and the engine disk persists boards after a redeploy. Define backup, cleanup, and retention. Move old Cloudinary public artifacts to private storage before claiming private designs; new uploads use local storage while billing is enabled. S3-compatible private object storage is the intended durable replacement for both disks.
+
+## Acceptance checks before enabling billing
+
+- Run `npm run test:credits` in `backend/`, `npm test` in `dunkai-designer/`, and `npm run typecheck` in `frontend/`. Python dependencies are needed for the AI tests and actual pipeline runs.
+- With a real Stripe test account, buy each pack, retry the same signed webhook, reject altered signatures and amount mismatches, then refund and dispute a payment. Reconcile Stripe payment IDs with `Payment`, `CreditEntry`, and `Wallet` records.
+- Run an authenticated project and board job through Vercel, Render API, Redis worker, private engine, and Atlas. Verify socket replay after reconnect, cancellation, restart recovery, cross-user denial for jobs and artifacts, and board access after browser disconnect.
+- In the deployed Linux container, verify bubblewrap can create mount, PID, and network namespaces. Run a known-good and deliberately bad board fixture. Confirm generated TSX cannot read service credentials or reach the network. Keep `BOARD_SANDBOX_REQUIRED=true`.
+- Validate Gerber layers, drill files, net connectivity, footprint/pad mappings, DRC/ERC, and unresolved substitutions with an independent tool, then require human approval before enabling any fabrication export. There is no such approval flow yet, so downloads must remain blocked.
+- Collect at least 100 anonymized real jobs and compare per-call model/input/output/cached tokens, retries, runtime, and Stripe fees to quoted credits. Review median and p90 margins and change the versioned tariff if needed. Model calls that fail without usage metadata may still need provider invoice reconciliation.
+- Verify abuse limits for new accounts, a launch-wide free-spend cap, monitored negative balances, stuck jobs, and Groq spend alerts. Review Indian tax, terms, and credit refund treatment with the merchant's adviser.
+- Review the nine moderate production dependency advisories in `dunkai-designer` before public fabrication export. The available npm fix would change the pinned tscircuit generation and requires PCB fixture validation. Backend and frontend production dependency audits currently report zero findings after compatible updates.
+
+Only then set `BILLING_ENABLED=true` on **both** Render API and worker and deploy the same revision. Checkout requires a verified account. If any payment, isolation, or artifact check fails, keep billing disabled and Gerber export blocked.

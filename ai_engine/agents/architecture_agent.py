@@ -43,6 +43,10 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_groq import ChatGroq
+try:
+    from .usage_meter import USAGE_CALLBACK
+except ImportError:
+    from usage_meter import USAGE_CALLBACK
 
 try:
     from .credentials import groq_api_key
@@ -442,6 +446,7 @@ def _call_groq(system_prompt: str, user_content: str, *, model: str | None = Non
             max_tokens=max_tokens,
             max_retries=2,
             model_kwargs={"response_format": {"type": "json_object"}},
+            callbacks=[USAGE_CALLBACK],
             **extra,
         )
         return llm.invoke(messages)

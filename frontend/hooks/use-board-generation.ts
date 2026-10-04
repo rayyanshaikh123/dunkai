@@ -65,7 +65,7 @@ export function useBoardGeneration(projectId: string | null, chatId: string | nu
       // splits one back into the {provider, model} pair the backend expects.
       // No stored choice: send none, so the server's own default applies.
       const choice = hasStoredBoardProvider() ? boardProviderRequest(readStoredBoardProvider()) : {}
-      const res = await aiApi.generateBoard(projectId, chatId, liveIr, choice)
+      const res = await aiApi.generateBoard(projectId, chatId, choice)
       const jobId = res?.jobId
       if (!jobId) {
         failBoardJob('The server did not return a job id.')

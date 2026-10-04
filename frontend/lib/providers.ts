@@ -72,7 +72,7 @@ export const BOARD_PROVIDERS: readonly BoardProvider[] = [
   },
 ] as const
 
-export const DEFAULT_BOARD_PROVIDER: BoardProviderId = 'claude-code'
+export const DEFAULT_BOARD_PROVIDER: BoardProviderId = 'groq'
 
 export const PROVIDER_STORAGE_KEY = 'dunkai-board-provider'
 

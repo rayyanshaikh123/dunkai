@@ -37,6 +37,9 @@ export const result = (payload) => emit({ ev: "result", ...payload })
 
 export const failure = (id, message) => emit({ ev: "error", stage: id, message })
 
+/** Provider token counts only; prompts and credentials never leave the worker. */
+export const usage = (provider, model, tokens) => emit({ ev: 'usage', provider, model, tokens })
+
 /** Human-readable log line. stderr on purpose — see the note above. */
 export const note = (...args) => {
   process.stderr.write(args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ") + "\n")

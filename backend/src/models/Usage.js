@@ -16,6 +16,7 @@ const usageSchema = new mongoose.Schema(
     hostedBoards: { type: Number, default: 0 },
     byokMessages: { type: Number, default: 0 },
     byokBoards: { type: Number, default: 0 },
+    freeChatsUsed: { type: Number, default: 0 },
   },
   { timestamps: true }
 );

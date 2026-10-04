@@ -28,6 +28,7 @@ const userSchema = new mongoose.Schema(
     // Email verification
     isVerified: { type: Boolean, default: false },
     emailVerificationToken: { type: String, select: false },
+    emailVerificationExpires: { type: Date, select: false },
 
     // Password reset
     resetPasswordToken: { type: String, select: false },
@@ -71,6 +72,7 @@ const userSchema = new mongoose.Schema(
         delete ret.resetPasswordToken;
         delete ret.resetPasswordExpires;
         delete ret.emailVerificationToken;
+        delete ret.emailVerificationExpires;
         delete ret.apiKeys;
         return ret;
       },

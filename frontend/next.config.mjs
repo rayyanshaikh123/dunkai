@@ -21,11 +21,8 @@ const nextConfig = {
         destination: `${backendUrl}/api/:path*`,
       },
       {
-        // Generated board artifacts (SVGs, GLB) are written into the backend's
-        // upload directory and served by its express.static mount. They are far
-        // too large to travel in a Socket.io payload, so the pipeline returns
-        // URLs and the browser fetches them through this rewrite — same origin,
-        // so no CORS and cookies still apply.
+        // Authenticated board and upload routes stay same-origin, so cookies
+        // accompany artifact requests through the Vercel rewrite.
         source: '/uploads/:path*',
         destination: `${backendUrl}/uploads/:path*`,
       },

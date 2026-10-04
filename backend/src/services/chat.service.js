@@ -5,6 +5,10 @@ import { getProject } from './project.service.js';
 import { callSupervisor } from './supervisor.service.js';
 import { parsePagination, buildPaginatedResponse } from '../helpers/pagination.js';
 import { logActivity } from '../helpers/activity.js';
+import { v4 as uuidv4 } from 'uuid';
+import { resolveCredentials } from './apiKey.service.js';
+import { reserveCharge, settleCharge } from './credits.service.js';
+import { env } from '../config/env.js';
 
 // ---- Get a chat owned by the user ----
 
@@ -101,39 +105,54 @@ export const saveMessage = async (chatId, { type = 'user', content, metadata = {
 
 export const sendMessage = async (chatId, { content, attachments = [], agentType }, user, req = null) => {
   const chat = await getOwnedChat(chatId, user);
+  const jobId = uuidv4();
+  const credentials = await resolveCredentials(user._id);
+  await reserveCharge(user, jobId, { action: 'chat', byok: Boolean(credentials.groq) });
 
   // Store user message
-  const userMessage = await Message.create({
-    chat: chat._id,
-    sender: user._id,
-    type: 'user',
-    content,
-    attachments,
-  });
-
-  // Fetch recent conversation history for context
-  const priorMessages = await Message.find({ chat: chat._id })
-    .sort({ createdAt: 1 })
-    .limit(50)
-    .select('type content metadata');
+  let userMessage;
+  let priorMessages;
+  try {
+    userMessage = await Message.create({
+      chat: chat._id,
+      sender: user._id,
+      type: 'user',
+      content,
+      attachments,
+    });
+    priorMessages = await Message.find({ chat: chat._id })
+      .sort({ createdAt: 1 })
+      .limit(50)
+      .select('type content metadata');
+  } catch (error) {
+    await settleCharge(jobId, null);
+    throw error;
+  }
 
   // Call the Supervisor Agent (Python AI server)
   let assistantContent = '';
   let assistantMetadata = {};
 
+  let result;
   try {
-    const result = await callSupervisor({
-      action: agentType || 'chat',
+    result = await callSupervisor({
+      action: 'chat',
       project: chat.project,
       messages: [...priorMessages].map((m) => ({ type: m.type, content: m.content })),
       files: attachments,
+      credentials,
+      jobId,
+      audit: { userId: user._id, projectId: chat.project, chatId: chat._id },
     });
-
-    assistantContent = result.message || result.content || result.response || JSON.stringify(result);
-    assistantMetadata = result;
   } catch (error) {
+    await settleCharge(jobId, null);
     assistantContent = 'I apologize, but I encountered an error processing your request. Please try again.';
     assistantMetadata = { error: error.message };
+  }
+  if (result) {
+    await settleCharge(jobId, result);
+    assistantContent = result.message || result.content || result.response || JSON.stringify(result);
+    assistantMetadata = result;
   }
 
   // Store assistant response
@@ -166,6 +185,7 @@ export const renameChat = async (id, title, user) => {
 // ---- Update this chat's pipeline artifacts (requirements/architecture/etc) ----
 
 export const updateArtifacts = async (id, data, user) => {
+  if (env.billingEnabled) throw ApiError.forbidden('Design artifacts are saved by the server after each run');
   const chat = await getOwnedChat(id, user);
   for (const key of ARTIFACT_KEYS) {
     if (data[key] === undefined) continue;

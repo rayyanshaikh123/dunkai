@@ -111,6 +111,8 @@ def _preflight(designer: Path) -> str | None:
         return f"dunkai-designer at {designer} has no node_modules — run npm install there"
     if shutil.which("node") is None:
         return "node is not on PATH"
+    if os.getenv("BOARD_SANDBOX_REQUIRED") == "true" and shutil.which("bwrap") is None:
+        return "board sandbox is required but bubblewrap is unavailable"
     return None
 
 
@@ -140,7 +142,7 @@ def stream_board(state: CircuitState, job_id: str) -> Generator[dict[str, Any], 
 
     # Per-request choice wins over the environment default. The env var stays
     # meaningful as the server-wide fallback for callers that send no provider.
-    provider = state.get("designer_provider") or os.getenv("DESIGNER_PROVIDER") or "claude-code"
+    provider = state.get("designer_provider") or os.getenv("DESIGNER_PROVIDER") or "groq"
     model = state.get("designer_model") or os.getenv("DESIGNER_MODEL") or None
     cmd = _designer_command(designer, out_dir, provider, model)
 
@@ -166,6 +168,10 @@ def stream_board(state: CircuitState, job_id: str) -> Generator[dict[str, Any], 
         errors="replace",
         bufsize=1,
     )
+    timeout_seconds = max(60, int(os.getenv("BOARD_JOB_TIMEOUT_SECONDS", "900")))
+    timer = threading.Timer(timeout_seconds, process.kill)
+    timer.daemon = True
+    timer.start()
 
     # Drain stderr on a thread while we read stdout.
     #
@@ -233,10 +239,17 @@ def stream_board(state: CircuitState, job_id: str) -> Generator[dict[str, Any], 
             }
         elif kind == "result":
             final = event
+        elif kind == "usage":
+            try:
+                from ..usage_meter import record_external_usage
+            except ImportError:
+                from usage_meter import record_external_usage
+            record_external_usage(event.get("model"), event.get("tokens"))
         elif kind == "error":
             error = event.get("message")
 
     process.wait()
+    timer.cancel()
     stderr_thread.join(timeout=5)
     stderr_tail = "".join(stderr_chunks)[-2000:]
 

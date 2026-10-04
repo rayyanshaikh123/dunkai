@@ -21,7 +21,7 @@
 import { mkdir, writeFile, readFile } from "node:fs/promises"
 import { createRequire } from "node:module"
 import path from "node:path"
-import { note } from "../lib/events.mjs"
+import { note, usage as emitUsage } from "../lib/events.mjs"
 import { findUndeclaredNetRefs } from "../lib/nets.mjs"
 import {
   FOOTPRINTER_GUIDE,
@@ -174,6 +174,11 @@ export async function writeFiles(files, workdir) {
  * human sees in an error message.
  */
 export function createChatProvider({ name, label, model, chat, maxTokens }) {
+  const meteredChat = async (messages, options) => {
+    const answer = await chat(messages, options)
+    if (answer.usage) emitUsage(name, model, answer.usage)
+    return answer
+  }
   return {
     name,
     model,
@@ -207,7 +212,7 @@ export function createChatProvider({ name, label, model, chat, maxTokens }) {
         .filter((line) => line !== "")
         .join("\n")
 
-      const { content } = await chat([{ role: "user", content: prompt }], {
+      const { content } = await meteredChat([{ role: "user", content: prompt }], {
         json: true,
         tokens: Math.min(maxTokens, 4000),
       })
@@ -227,7 +232,7 @@ export function createChatProvider({ name, label, model, chat, maxTokens }) {
      * only picks from listed pins; lib/pinmap.mjs validates every answer.
      */
     async answerPinQuestions(questions, context = {}) {
-      const { content } = await chat([{ role: "user", content: pinQuestionPrompt(questions, context) }], {
+      const { content } = await meteredChat([{ role: "user", content: pinQuestionPrompt(questions, context) }], {
         json: true,
         tokens: Math.min(maxTokens, 6000),
       })
@@ -270,7 +275,7 @@ export function createChatProvider({ name, label, model, chat, maxTokens }) {
 
       const ask = async (extra) => {
         const prompt = extra ? `${basePrompt}\n\n${extra}` : basePrompt
-        const { content, usage } = await chat([{ role: "user", content: prompt }], { json: true })
+        const { content, usage } = await meteredChat([{ role: "user", content: prompt }], { json: true })
         const parsed = parseJsonObject(content)
         if (!parsed?.files || typeof parsed.files !== "object") {
           throw new Error(
@@ -353,7 +358,7 @@ export function createChatProvider({ name, label, model, chat, maxTokens }) {
 
       note(`  provider: ${name} (${model}) repairing the board`)
 
-      const { content } = await chat([{ role: "user", content: prompt }], { json: true })
+      const { content } = await meteredChat([{ role: "user", content: prompt }], { json: true })
       const parsed = parseJsonObject(content)
       if (!parsed?.files || typeof parsed.files !== "object") {
         throw new Error(

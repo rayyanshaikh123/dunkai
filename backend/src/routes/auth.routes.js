@@ -2,6 +2,7 @@ import { Router } from 'express';
 import * as c from '../controllers/auth.controller.js';
 import { validate } from '../middleware/validation.js';
 import { authenticate } from '../middleware/auth.js';
+import { authLimiter } from '../middleware/security.js';
 import {
   registerValidation,
   loginValidation,
@@ -17,14 +18,14 @@ import {
 export const authRoutes = Router();
 
 // Public routes
-authRoutes.post('/register', registerValidation, validate, c.register);
-authRoutes.post('/login', loginValidation, validate, c.login);
+authRoutes.post('/register', authLimiter, registerValidation, validate, c.register);
+authRoutes.post('/login', authLimiter, loginValidation, validate, c.login);
 authRoutes.post('/refresh', refreshValidation, validate, c.refresh);
 authRoutes.post('/logout', c.logout);
-authRoutes.post('/forgot-password', forgotPasswordValidation, validate, c.forgotPassword);
-authRoutes.post('/reset-password', resetPasswordValidation, validate, c.resetPassword);
-authRoutes.post('/verify-email', verifyEmailValidation, validate, c.verifyEmail);
-authRoutes.post('/resend-verification', resendVerificationValidation, validate, c.resendVerification);
+authRoutes.post('/forgot-password', authLimiter, forgotPasswordValidation, validate, c.forgotPassword);
+authRoutes.post('/reset-password', authLimiter, resetPasswordValidation, validate, c.resetPassword);
+authRoutes.post('/verify-email', authLimiter, verifyEmailValidation, validate, c.verifyEmail);
+authRoutes.post('/resend-verification', authLimiter, resendVerificationValidation, validate, c.resendVerification);
 
 // Google OAuth
 authRoutes.get('/google', c.googleAuth);

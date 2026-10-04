@@ -386,13 +386,14 @@ export function Sidebar() {
                       <Button
                         type="button"
                         variant="outline"
-                        aria-label="Upgrade plan"
+                        aria-label="Add credits"
+                        onClick={() => router.push('/settings')}
                         className="h-10 w-10 rounded-xl border-sidebar-border bg-background/70 p-0 text-sidebar-foreground transition-colors hover:bg-sidebar-accent"
                       >
                         <Zap className="h-4 w-4" />
                       </Button>
                     </TooltipTrigger>
-                    <TooltipContent side="right">Upgrade plan</TooltipContent>
+                    <TooltipContent side="right">Add credits</TooltipContent>
                   </Tooltip>
                 </div>
               </div>

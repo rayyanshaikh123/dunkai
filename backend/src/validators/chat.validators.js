@@ -6,9 +6,9 @@ export const createChatValidation = [
 ];
 
 export const sendMessageValidation = [
-  body('content').isLength({ min: 1, max: 50000 }).withMessage('Message content is required (1-50000 chars)'),
-  body('attachments').optional().isArray(),
-  body('agentType').optional().isString(),
+  body('content').isLength({ min: 1, max: 8000 }).withMessage('Message content is required (1-8000 chars)'),
+  body('attachments').optional().isArray({ max: 5 }),
+  body('agentType').optional().isIn(['chat']),
 ];
 
 export const renameChatValidation = [

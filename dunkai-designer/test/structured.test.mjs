@@ -171,6 +171,14 @@ test("emitted board: declared nets only, no single-pin nets, real pins only", ()
   assert.match(boardTsx, /<board [^>]*layoutMode="grid"/) // no placement yet: measuring build
 })
 
+test("emitted board rejects distinct net names that normalize to one copper net", () => {
+  const d = design([
+    { name: "A-B", members: [] },
+    { name: "A_B", members: [] },
+  ])
+  assert.throws(() => emitBoard(d, [], { assignments: {} }), /net names "A-B" and "A_B" both become "A_B"/)
+})
+
 test("emitted board with a placement uses coordinates, not grid layout", () => {
   const d = design([])
   const m = mapPins(d, [resolution("U2", SENSOR)])

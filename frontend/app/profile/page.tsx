@@ -131,7 +131,7 @@ function ProfileContent() {
               <p className="text-sm text-muted-foreground truncate">{user.email}</p>
               <div className="mt-2 flex items-center gap-2">
                 <Badge variant="outline" className="text-[10px] uppercase tracking-wider border-foreground/20">
-                  {user.subscription?.plan || 'free'}
+                  Prepaid credits
                 </Badge>
                 <Badge variant="outline" className="text-[10px] uppercase tracking-wider border-foreground/20">
                   {user.provider === 'google' ? 'Google account' : 'Email account'}

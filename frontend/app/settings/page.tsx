@@ -22,7 +22,6 @@ import {
 import { useTheme } from 'next-themes'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Progress } from '@/components/ui/progress'
 import { ProtectedRoute } from '@/components/layouts/protected-route'
 import { ProviderPicker } from '@/components/workspace/provider-picker'
 import { accountApi, aiApi, billingApi, type ApiKeyStatus, type ByokProvider } from '@/lib/api'
@@ -36,6 +35,7 @@ import {
 } from '@/lib/providers'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
+import { CREDIT_PACK_COPY } from '@/lib/plans'
 
 const KEY_PLACEHOLDERS: Record<ByokProvider, string> = {
   groq: 'gsk_…',
@@ -70,65 +70,62 @@ function Section({
   )
 }
 
-function Meter({ label, used, limit }: { label: string; used: number; limit: number | null }) {
-  const pct = limit ? Math.min(100, (used / limit) * 100) : 0
-  return (
-    <div>
-      <div className="flex items-baseline justify-between text-sm">
-        <span>{label}</span>
-        <span className="font-mono text-xs text-muted-foreground">
-          {used.toLocaleString()} / {limit === null ? 'unlimited' : limit.toLocaleString()}
-        </span>
-      </div>
-      {limit !== null && (
-        <Progress value={pct} className={cn('mt-2 h-1.5', pct >= 90 && '[&>div]:bg-destructive')} />
-      )}
-    </div>
-  )
-}
-
 function UsageCard() {
+  const queryClient = useQueryClient()
   const usage = useQuery({ queryKey: ['billing', 'usage'], queryFn: billingApi.usage })
   const plans = useQuery({ queryKey: ['billing', 'plans'], queryFn: billingApi.plans, staleTime: 5 * 60_000 })
+  const [buying, setBuying] = useState<string | null>(null)
+  const [buyError, setBuyError] = useState<string | null>(null)
 
   if (usage.isLoading) return <div className="h-24 animate-pulse rounded-2xl bg-secondary" />
   if (!usage.data) return <p className="text-sm text-muted-foreground">Usage is unavailable right now.</p>
 
-  const { plan, usage: u, billingEnabled, period } = usage.data
-  const checkout = plans.data?.checkout
+  const { wallet, billingEnabled, period } = usage.data
+  const buy = async (packId: string) => {
+    setBuying(packId)
+    setBuyError(null)
+    try {
+      const checkout = await billingApi.checkout(packId)
+      window.location.assign(checkout.url)
+    } catch (error) {
+      setBuyError(error instanceof Error ? error.message : 'Could not start checkout')
+      setBuying(null)
+    }
+  }
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-          <span className="rounded-full bg-primary px-3 py-1 text-xs font-medium text-primary-foreground">{plan.name}</span>
-          <span className="text-xs text-muted-foreground">Usage for {period}</span>
+          <span className="rounded-full bg-primary px-3 py-1 text-xs font-medium text-primary-foreground">Prepaid credits</span>
+          <span className="text-xs text-muted-foreground">Free chats for {period} (UTC)</span>
         </div>
-        {billingEnabled && plan.id === 'free' && (checkout?.pro || checkout?.contact) && (
-          <Button asChild size="sm" className="rounded-full">
-            <a href={checkout.pro || checkout.contact} target="_blank" rel="noreferrer">
-              Upgrade to Pro
-            </a>
-          </Button>
-        )}
+        <Button variant="outline" size="sm" onClick={() => queryClient.invalidateQueries({ queryKey: ['billing', 'usage'] })}>Refresh balance</Button>
       </div>
 
       {billingEnabled ? (
-        <div className="grid gap-5 sm:grid-cols-3">
-          <Meter label="Hosted AI messages" used={u.hostedMessages} limit={plan.limits.hostedMessages} />
-          <Meter label="Hosted boards" used={u.hostedBoards} limit={plan.limits.hostedBoards} />
-          <Meter label="Active projects" used={u.projects} limit={plan.limits.projects} />
+        <div className="space-y-5">
+          <div className="grid gap-4 sm:grid-cols-3">
+            <div className="rounded-2xl bg-secondary p-4"><p className="text-xs text-muted-foreground">Available credits</p><p className="mt-1 text-2xl font-semibold">{wallet.available}</p></div>
+            <div className="rounded-2xl bg-secondary p-4"><p className="text-xs text-muted-foreground">Trial / paid</p><p className="mt-1 text-lg font-semibold">{wallet.trialAvailable} / {wallet.paidAvailable}</p></div>
+            <div className="rounded-2xl bg-secondary p-4"><p className="text-xs text-muted-foreground">Free hosted chats</p><p className="mt-1 text-lg font-semibold">{wallet.freeChatsUsed} / {wallet.freeChatsLimit} used</p></div>
+          </div>
+          <p className="text-sm text-muted-foreground">{wallet.reserved} credits reserved for running jobs. Credits are ₹1 of prepaid value and do not expire.</p>
+          <div className="grid gap-3 sm:grid-cols-3">
+            {CREDIT_PACK_COPY.map((pack) => (
+              <Button key={pack.id} variant="outline" disabled={buying !== null || !plans.data?.packs.some((p) => p.id === pack.id && p.amountPaise === pack.rupees * 100)} onClick={() => buy(pack.id)}>
+                {buying === pack.id ? 'Opening checkout…' : `${pack.credits} credits · ₹${pack.rupees}`}
+              </Button>
+            ))}
+          </div>
+          {buyError && <p className="text-sm text-destructive">{buyError}</p>}
+          <p className="text-xs text-muted-foreground">Payment confirmation updates your balance through Stripe; returning from checkout alone does not add credits.</p>
         </div>
       ) : (
         <p className="rounded-2xl bg-secondary px-4 py-3 text-sm text-muted-foreground">
-          Usage limits are off on this server (self-hosted), so nothing here is capped.
+          Billing is off on this server. Credit purchases are unavailable.
         </p>
       )}
-
-      <p className="text-sm text-muted-foreground">
-        On your own keys this month: <span className="font-medium text-foreground">{u.byokMessages}</span> messages and{' '}
-        <span className="font-medium text-foreground">{u.byokBoards}</span> boards — never counted against your plan.
-      </p>
     </div>
   )
 }
@@ -292,10 +289,10 @@ function SettingsContent() {
       <main className="mx-auto max-w-3xl space-y-5 px-4 pb-16 pt-4 sm:px-6">
         <div className="pb-2">
           <h1 className="text-4xl font-semibold tracking-[-0.03em]">Settings</h1>
-          <p className="mt-2 text-muted-foreground">Your plan, your API keys, and how DunkAI looks.</p>
+          <p className="mt-2 text-muted-foreground">Your credits, API keys, and how DunkAI looks.</p>
         </div>
 
-        <Section icon={Gauge} title="Plan & usage" description="What runs on DunkAI's keys counts toward your plan. Your own keys never do.">
+        <Section icon={Gauge} title="Credits & usage" description="Free hosted chats, prepaid credits, and compute charges for longer jobs.">
           <UsageCard />
         </Section>
 

@@ -2,6 +2,10 @@ import { Server as SocketIOServer } from 'socket.io';
 import { verifyAccessToken } from '../utils/tokens.js';
 import { User } from '../models/User.js';
 import { env } from '../config/env.js';
+import { Project } from '../models/Project.js';
+import { AiJob } from '../models/AiJob.js';
+import { createAdapter } from '@socket.io/redis-adapter';
+import { redisConnection } from '../services/queue.service.js';
 
 /**
  * Initialize Socket.io server.
@@ -17,6 +21,10 @@ export const initSocket = (httpServer) => {
     pingTimeout: 60000,
     pingInterval: 25000,
   });
+  if (env.aiQueueEnabled) {
+    const pub = redisConnection();
+    io.adapter(createAdapter(pub, pub.duplicate()));
+  }
 
   // Socket authentication middleware
   io.use(async (socket, next) => {
@@ -63,7 +71,12 @@ export const initSocket = (httpServer) => {
     socket.join(`user:${socket.userId}`);
 
     // Join project rooms for collaborative features
-    socket.on('project:join', (projectId) => {
+    socket.on('project:join', async (projectId) => {
+      if (!/^[a-f\d]{24}$/i.test(String(projectId))) return;
+      const allowed = await Project.exists({ _id: projectId, $or: [
+        { owner: socket.userId }, { 'members.user': socket.userId },
+      ] });
+      if (!allowed) return;
       socket.join(`project:${projectId}`);
       socket.to(`project:${projectId}`).emit('user:joined', {
         userId: socket.userId,
@@ -72,6 +85,7 @@ export const initSocket = (httpServer) => {
     });
 
     socket.on('project:leave', (projectId) => {
+      if (!socket.rooms.has(`project:${projectId}`)) return;
       socket.leave(`project:${projectId}`);
       socket.to(`project:${projectId}`).emit('user:left', {
         userId: socket.userId,
@@ -80,6 +94,7 @@ export const initSocket = (httpServer) => {
 
     // Typing indicators
     socket.on('typing:start', ({ projectId, chatId }) => {
+      if (!socket.rooms.has(`project:${projectId}`)) return;
       socket.to(`project:${projectId}`).emit('typing:start', {
         userId: socket.userId,
         name: socket.user.name,
@@ -88,6 +103,7 @@ export const initSocket = (httpServer) => {
     });
 
     socket.on('typing:stop', ({ projectId, chatId }) => {
+      if (!socket.rooms.has(`project:${projectId}`)) return;
       socket.to(`project:${projectId}`).emit('typing:stop', {
         userId: socket.userId,
         chatId,
@@ -95,8 +111,13 @@ export const initSocket = (httpServer) => {
     });
 
     // AI progress updates (for streaming)
-    socket.on('ai:subscribe', (jobId) => {
+    socket.on('ai:subscribe', async (jobId) => {
+      if (typeof jobId !== 'string') return;
+      const job = await AiJob.findOne({ jobId, user: socket.userId });
+      if (!job) return;
       socket.join(`job:${jobId}`);
+      if (job.status === 'completed') socket.emit('ai:complete', { jobId, result: { jobId, data: job.result, status: 'completed' } });
+      if (job.status === 'failed') socket.emit('ai:error', { jobId, error: { error: job.error || 'Job failed' } });
     });
 
     socket.on('ai:unsubscribe', (jobId) => {

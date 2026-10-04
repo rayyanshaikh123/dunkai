@@ -15,11 +15,11 @@ const FAQS = [
   },
   {
     q: "How do my own API keys work?",
-    a: "Add a Groq, Gemini or Anthropic key in Settings. We verify it with the provider, store it encrypted, and use it only for your runs. Anything your key pays for never counts against your plan.",
+    a: "Add a Groq, Gemini or Anthropic key in Settings. We verify it with the provider and store it encrypted. Your key pays the model provider; pipeline compute is 10 DunkAI credits and board compute is 20.",
   },
   {
-    q: "What counts as a hosted AI message?",
-    a: "One turn answered on our keys: an interview reply, a pipeline run, or a code-chat edit. If you've added your own Groq key, none of these count.",
+    q: "How do free chats and credits work?",
+    a: "Verified accounts get five hosted chat turns each UTC calendar month and 150 trial credits once. After free chats, a chat costs 2 credits. A design pipeline is 30 credits and Groq PCB generation is 101 credits. You can buy more credits in INR.",
   },
   {
     q: "Can I run DunkAI on my own infrastructure?",

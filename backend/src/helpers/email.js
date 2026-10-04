@@ -1,13 +1,12 @@
 import { env } from '../config/env.js';
+import nodemailer from 'nodemailer';
 
-/**
- * Email service — placeholder implementation.
- * In production, replace with a real SMTP provider (Nodemailer, SendGrid, AWS SES, etc.)
- */
+let transporter;
 
 export const sendEmail = async ({ to, subject, html, text }) => {
   if (!env.emailHost) {
-    // Development mode: log to console instead of sending
+    if (env.isProduction) throw new Error('EMAIL_HOST is required to send account email');
+    // Development mode only: show the link in the local server log.
     console.info('\n========== EMAIL (DEV MODE) ==========');
     console.info(`To: ${to}`);
     console.info(`Subject: ${subject}`);
@@ -16,17 +15,14 @@ export const sendEmail = async ({ to, subject, html, text }) => {
     return { sent: false, dev: true };
   }
 
-  // Production: integrate with real SMTP provider here
-  // Example with nodemailer:
-  // const transporter = nodemailer.createTransport({
-  //   host: env.emailHost,
-  //   port: env.emailPort,
-  //   auth: { user: env.emailUser, pass: env.emailPass },
-  // });
-  // await transporter.sendMail({ from: env.emailFrom, to, subject, html, text });
-
-  console.warn('[Email] SMTP configured but transporter not implemented');
-  return { sent: false };
+  transporter ??= nodemailer.createTransport({
+    host: env.emailHost,
+    port: env.emailPort,
+    secure: env.emailPort === 465,
+    auth: env.emailUser && env.emailPass ? { user: env.emailUser, pass: env.emailPass } : undefined,
+  });
+  await transporter.sendMail({ from: env.emailFrom, to, subject, html, text });
+  return { sent: true };
 };
 
 export const sendPasswordResetEmail = async (email, resetToken) => {
@@ -41,7 +37,7 @@ export const sendPasswordResetEmail = async (email, resetToken) => {
 };
 
 export const sendVerificationEmail = async (email, verificationToken) => {
-  const verifyUrl = `${env.clientOrigin}/verify-email?token=${verificationToken}`;
+  const verifyUrl = `${env.clientOrigin}/verify-email?token=${verificationToken}&email=${encodeURIComponent(email)}`;
   const html = `
     <h2>Verify your DunkAI email</h2>
     <p>Click the link below to verify your email address.</p>

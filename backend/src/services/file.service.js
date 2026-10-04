@@ -6,11 +6,30 @@ import { getProject } from './project.service.js';
 import { cloudinary, isCloudinaryConfigured } from '../config/cloudinary.js';
 import { categorizeFile } from '../middleware/upload.js';
 import { logActivity } from '../helpers/activity.js';
+import { env } from '../config/env.js';
+
+const validUploadContent = (file) => {
+  const fd = fs.openSync(file.path, 'r');
+  const bytes = Buffer.alloc(Math.min(file.size, 4096));
+  try { fs.readSync(fd, bytes, 0, bytes.length, 0); } finally { fs.closeSync(fd); }
+  const starts = (...values) => values.every((value, i) => bytes[i] === value);
+  if (file.mimetype === 'image/jpeg' || file.mimetype === 'image/jpg') return starts(0xff, 0xd8, 0xff);
+  if (file.mimetype === 'image/png') return starts(0x89, 0x50, 0x4e, 0x47);
+  if (file.mimetype === 'image/gif') return bytes.toString('ascii', 0, 4) === 'GIF8';
+  if (file.mimetype === 'image/webp') return bytes.toString('ascii', 0, 4) === 'RIFF' && bytes.toString('ascii', 8, 12) === 'WEBP';
+  if (file.mimetype === 'application/pdf') return bytes.toString('ascii', 0, 5) === '%PDF-';
+  const sample = bytes.toString('utf8').trimStart().toLowerCase();
+  if (sample.startsWith('<') || sample.includes('<script') || sample.includes('<svg')) return false;
+  if (file.mimetype === 'application/json') {
+    try { JSON.parse(fs.readFileSync(file.path, 'utf8')); return true; } catch { return false; }
+  }
+  return ['text/plain', 'text/csv'].includes(file.mimetype);
+};
 
 // ---- Upload to Cloudinary (if configured) or use local path ----
 
 const uploadToCloudinary = async (filePath, folder = 'dunkai') => {
-  if (!isCloudinaryConfigured()) {
+  if (env.billingEnabled || !isCloudinaryConfigured()) {
     return null; // Use local storage
   }
 
@@ -41,6 +60,10 @@ const deleteFromCloudinary = async (publicId) => {
 // ---- Upload file ----
 
 export const uploadFile = async (file, projectId, user, req = null) => {
+  if (!validUploadContent(file)) {
+    fs.unlink(file.path, () => {});
+    throw ApiError.badRequest('File content does not match an allowed type');
+  }
   if (projectId) {
     await getProject(projectId, user, true);
   }
@@ -115,6 +138,9 @@ export const deleteFile = async (fileId, user) => {
 export const getFile = async (fileId, user) => {
   const file = await File.findById(fileId);
   if (!file || file.isDeleted) throw ApiError.notFound('File not found');
+  if (String(file.uploadedBy) !== String(user._id)) {
+    if (!file.project) throw ApiError.forbidden('File is private');
+    await getProject(file.project, user);
+  }
   return file;
 };
-

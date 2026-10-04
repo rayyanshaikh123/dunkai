@@ -1,4 +1,5 @@
 import { api, ApiError } from './axios-client'
+import type { FirmwareBoardsResponse, FirmwareBuild } from './firmware/types'
 
 const API_BASE = '/api/v1'
 
@@ -49,6 +50,14 @@ export const authApi = {
 
   me: () =>
     request<{ _id: string; name: string; email: string; avatar: string; role: string }>('/auth/me'),
+
+  verifyEmail: (token: string) => request<{ verified: boolean }>('/auth/verify-email', {
+    method: 'POST', body: JSON.stringify({ token }),
+  }),
+
+  resendVerification: (email: string) => request('/auth/resend-verification', {
+    method: 'POST', body: JSON.stringify({ email }),
+  }),
 
   forgotPassword: (email: string) =>
     request('/auth/forgot-password', {
@@ -213,8 +222,7 @@ export const aiApi = {
    * Run dunkai-designer over an existing pcb_ir handoff.
    *
    * Same endpoint, same Socket.io relay and same jobId contract as the chat
-   * pipeline — only the action differs. The pcb_ir is sent along because
-   * run-stream persists nothing, so the browser holds the only copy.
+   * pipeline — only the action differs. The server reads its persisted IR.
    *
    * `provider` and `model` are omitted when unset so the server-side
    * DESIGNER_PROVIDER default still applies; sending an explicit null would
@@ -223,7 +231,6 @@ export const aiApi = {
   generateBoard: (
     projectId: string,
     chatId: string | null,
-    pcbIr: Record<string, unknown>,
     opts: { provider?: string; model?: string } = {}
   ) =>
     request<{ jobId: string }>('/ai/run-stream', {
@@ -232,7 +239,6 @@ export const aiApi = {
         projectId,
         ...(chatId ? { chatId } : {}),
         action: 'generate_board',
-        pcbIr,
         ...(opts.provider ? { provider: opts.provider } : {}),
         ...(opts.model ? { model: opts.model } : {}),
       }),
@@ -286,16 +292,10 @@ export const accountApi = {
 }
 
 // ---- Billing ----
-export interface PlanLimits {
-  hostedMessages: number | null
-  hostedBoards: number | null
-  projects: number | null
-}
-
 export interface UsageSummary {
   billingEnabled: boolean
   period: string
-  plan: { id: string; name: string; limits: PlanLimits; status: string }
+  wallet: WalletSummary
   usage: {
     hostedMessages: number
     hostedBoards: number
@@ -305,15 +305,34 @@ export interface UsageSummary {
   }
 }
 
+export interface WalletSummary {
+  currency: 'INR'
+  trialAvailable: number
+  paidAvailable: number
+  reserved: number
+  available: number
+  freeChatsUsed: number
+  freeChatsLimit: number
+  period: string
+}
+
 export interface PublicPlans {
   billingEnabled: boolean
-  checkout: { pro: string | null; contact: string }
-  plans: Array<{ id: string; name: string; price: { monthly: number; annual: number } | null; limits: PlanLimits }>
+  currency: 'INR'
+  tariffVersion: number
+  freeChatsPerMonth: number
+  trialCredits: number
+  packs: Array<{ id: string; credits: number; amountPaise: number }>
+  rates: { chat: number; pipeline: number; board: number; byokPipeline: number; byokBoard: number }
 }
 
 export const billingApi = {
   plans: () => request<PublicPlans>('/billing/plans'),
   usage: () => request<UsageSummary>('/billing/usage'),
+  wallet: () => request<WalletSummary>('/billing/wallet'),
+  entries: () => request<Array<{ _id: string; kind: string; availableTrialDelta: number; availablePaidDelta: number; createdAt: string }>>('/billing/entries'),
+  quote: (action: string, byok = false) => request<{ credits: number; kind: string }>(`/billing/quote?${new URLSearchParams({ action, byok: String(byok) })}`),
+  checkout: (packId: string) => request<{ url: string; orderId: string }>('/billing/checkout', { method: 'POST', body: JSON.stringify({ packId }) }),
 }
 
 // ---- File API ----
