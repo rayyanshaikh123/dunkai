@@ -13,6 +13,8 @@ import { useUpdateChatArtifacts } from '@/hooks/use-chats'
 import { useBoardGeneration } from '@/hooks/use-board-generation'
 import { useSpeechToText } from '@/hooks/use-speech-to-text'
 import { toast } from 'sonner'
+import { useAuth } from '@/lib/auth-context'
+import { clearCheckpoint, readCheckpoint } from '@/lib/browser-pipeline/checkpoint'
 
 // ---- Message types ----
 type MessageRole = 'user' | 'assistant'
@@ -47,6 +49,7 @@ const IDLE_WORDS = ['Thinking', 'Tinkering', 'Sketching', 'Wiring', 'Probing', '
 /** Shown instead of a success message when a turn came back with nothing. */
 const NO_OUTPUT =
   'That run finished without producing anything to show. Try rephrasing the request, or run it again.'
+const browserComputeOnly = process.env.NEXT_PUBLIC_BROWSER_COMPUTE_ONLY === 'true'
 
 
 function humanText(value: unknown, fallback: string): string {
@@ -113,6 +116,7 @@ const BOARD_DONE = 'PCB preview generated — open the PCB tab for the layout an
 const boardFailure = (error: string | null) => `⚠️ PCB generation failed: ${error ?? 'unknown error'}`
 
 export function ChatInterface({ projectId }: { projectId: string }) {
+  const { user } = useAuth()
   const { pendingPrompt, setPendingPrompt, setAiOutput, replaceAiOutput, setActiveTab, setPipelineProgress, clearPipelineProgress, setPipelineRun, selectedModel, setSelectedModel } = useWorkspaceStore()
   // Which chat *session* this view is showing — lives in the shared store so
   // the sidebar's session list can switch it directly instead of relaying
@@ -130,7 +134,7 @@ export function ChatInterface({ projectId }: { projectId: string }) {
   const updateChatArtifacts = useUpdateChatArtifacts(projectId)
   // Board generation runs itself off the back of the pipeline; this view owns
   // the trigger because this is where the pipeline's completion lands.
-  const { generate: generateBoard } = useBoardGeneration(projectId, activeChatId)
+  const { generate: generateBoard, cancel: cancelBoard } = useBoardGeneration(projectId, activeChatId)
   const boardJob = useWorkspaceStore((s) => s.boardJob)
   // The jobId of a board run this view started, so the outcome is announced
   // once and only for a run the chat is actually narrating.
@@ -147,9 +151,19 @@ export function ChatInterface({ projectId }: { projectId: string }) {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
+  const [resumeRequest, setResumeRequest] = useState<string | null>(null)
+  const recoveryKey = user?._id && activeChatId ? `${user._id}:${projectId}:${activeChatId}` : null
+  useEffect(() => {
+    let current = true
+    setResumeRequest(null)
+    if (browserComputeOnly && recoveryKey) readCheckpoint(recoveryKey).then((saved) => {
+      if (current && saved) setResumeRequest(saved.input.request)
+    }).catch(() => {})
+    return () => { current = false }
+  }, [recoveryKey])
   const [billingEnabled, setBillingEnabled] = useState(false)
   useEffect(() => {
-    billingApi.plans().then((plans) => setBillingEnabled(plans.billingEnabled)).catch(() => {})
+    billingApi.plans().then((plans) => setBillingEnabled(plans.meteringEnabled ?? plans.billingEnabled)).catch(() => {})
   }, [])
   const [placeholder, setPlaceholder] = useState('')
   const [placeholderIndex, setPlaceholderIndex] = useState(0)
@@ -160,12 +174,27 @@ export function ChatInterface({ projectId }: { projectId: string }) {
   const [activeNode, setActiveNode] = useState<string>('')
   const [idleWord, setIdleWord] = useState(0)
 
-  const [attachments, setAttachments] = useState<Array<{ id: string; name: string }>>([])
+  const [attachments, setAttachments] = useState<Array<{ id: string; name: string; text?: string }>>([])
   const [uploadingFile, setUploadingFile] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const speech = useSpeechToText(setInput)
 
   const bottomRef = useRef<HTMLDivElement>(null)
+  const browserAbortRef = useRef<AbortController | null>(null)
+  const browserRunActiveRef = useRef(false)
+  const browserRunTargetRef = useRef<{ projectId: string; chatId: string } | null>(null)
+  useEffect(() => () => {
+    if (!browserAbortRef.current) return
+    browserAbortRef.current.abort()
+    if (useWorkspaceStore.getState().boardJob.status === 'running') cancelBoard()
+  }, [cancelBoard])
+  useEffect(() => {
+    const target = browserRunTargetRef.current
+    if (!browserComputeOnly || !target) return
+    if (target.projectId === projectId && target.chatId === activeChatId) return
+    browserAbortRef.current?.abort()
+    if (useWorkspaceStore.getState().boardJob.status === 'running') cancelBoard()
+  }, [projectId, activeChatId, cancelBoard])
 
   // ---- Sync pipeline progress to workspace store for top Nav Tabs ----
   useEffect(() => {
@@ -392,7 +421,15 @@ export function ChatInterface({ projectId }: { projectId: string }) {
 
   // ---- Core agent runner ----
   const runAgent = useCallback(
-    async (request: string, runAction: PendingAction = 'run_workflow') => {
+    async (request: string, runAction: PendingAction = 'run_workflow', resume = false) => {
+      if (browserComputeOnly && browserRunActiveRef.current) return
+      if (browserComputeOnly && !window.confirm(
+        'Run this design on your device? This browser tab will use CPU and memory and must remain open. Model requests go through DunkAI to Groq and may use credits.'
+      )) {
+        setInput(request)
+        return
+      }
+      if (browserComputeOnly) browserRunActiveRef.current = true
       const userMessageId = `${Date.now()}-user`
       setMessages((prev) => {
         if (prev.some((m) => m.content === request)) return prev
@@ -422,8 +459,14 @@ export function ChatInterface({ projectId }: { projectId: string }) {
         }
       }
 
+      const runRecoveryKey = user?._id && targetChatId ? `${user._id}:${projectId}:${targetChatId}` : null
+      let browserCheckpointId: string | undefined
       try {
-        const res = await aiApi.runStream({
+        if (browserComputeOnly && !targetChatId) throw new Error('Could not open a project chat for this run')
+        if (browserComputeOnly && targetChatId) browserRunTargetRef.current = { projectId, chatId: targetChatId }
+        const browserController = browserComputeOnly ? new AbortController() : null
+        browserAbortRef.current = browserController
+        const res = browserComputeOnly ? { jobId: crypto.randomUUID() } : await aiApi.runStream({
           projectId,
           chatId: targetChatId ?? undefined,
           action: runAction,
@@ -437,7 +480,7 @@ export function ChatInterface({ projectId }: { projectId: string }) {
 
         // Persist the message only after the server accepts the quoted job.
         // A 402 must not leave an unanswered turn in the chat history.
-        if (targetChatId) {
+        if (targetChatId && !browserComputeOnly) {
           chatApi.saveMessage(targetChatId, 'user', request).catch(() => {})
         }
 
@@ -459,14 +502,14 @@ export function ChatInterface({ projectId }: { projectId: string }) {
           return
         }
 
-        const socket = (await import('@/lib/socket')).getSocket()
-        socket.emit('ai:subscribe', jobId)
+        const socket = browserComputeOnly ? null : (await import('@/lib/socket')).getSocket()
+        socket?.emit('ai:subscribe', jobId)
 
         const cleanup = () => {
-          socket.off('ai:progress', handleProgress)
-          socket.off('ai:complete', handleComplete)
-          socket.off('ai:error', handleError)
-          socket.emit('ai:unsubscribe', jobId)
+          socket?.off('ai:progress', handleProgress)
+          socket?.off('ai:complete', handleComplete)
+          socket?.off('ai:error', handleError)
+          socket?.emit('ai:unsubscribe', jobId)
         }
 
         // Accumulated locally (not read back from React state) so
@@ -485,8 +528,14 @@ export function ChatInterface({ projectId }: { projectId: string }) {
 
         const handleComplete = async (socketData: Record<string, any>) => {
           cleanup()
-          setLoading(false)
-          setActiveNode('')
+          if (browserComputeOnly && (browserController?.signal.aborted ||
+              useWorkspaceStore.getState().activeChatId !== targetChatId)) {
+            throw new Error('Run cancelled after leaving this chat')
+          }
+          if (!browserComputeOnly) {
+            setLoading(false)
+            setActiveNode('')
+          }
 
           let payload = socketData.data ?? socketData.result ?? socketData
           if (payload && payload.data && typeof payload.data === 'object') {
@@ -512,6 +561,7 @@ export function ChatInterface({ projectId }: { projectId: string }) {
               chatApi.saveMessage(targetChatId, 'assistant', question, options).catch(() => {})
             }
             setPipelineRun('question')
+            if (browserComputeOnly) setLoading(false)
             return
           }
 
@@ -527,6 +577,7 @@ export function ChatInterface({ projectId }: { projectId: string }) {
             setMessages((prev) => [...prev, { id: `${Date.now()}-assistant`, role: 'assistant', content: notice }])
             if (targetChatId) chatApi.saveMessage(targetChatId, 'assistant', notice).catch(() => {})
             setPipelineRun('error')
+            if (browserComputeOnly) setLoading(false)
             return
           }
 
@@ -585,7 +636,12 @@ export function ChatInterface({ projectId }: { projectId: string }) {
             if (artifactPayload.code_generation) artifactUpdate.code_generation = artifactPayload.code_generation
 
             if (Object.keys(artifactUpdate).length > 0 && targetChatId) {
-              updateChatArtifacts.mutate({ id: targetChatId, data: artifactUpdate })
+              if (browserComputeOnly) {
+                await updateChatArtifacts.mutateAsync({ id: targetChatId, data: artifactUpdate })
+                if (browserController?.signal.aborted) throw new Error('Run cancelled')
+              } else {
+                updateChatArtifacts.mutate({ id: targetChatId, data: artifactUpdate })
+              }
             }
 
             // The project's title, unlike the design artifacts above, is a
@@ -627,7 +683,12 @@ export function ChatInterface({ projectId }: { projectId: string }) {
           ])
 
           if (targetChatId) {
-            chatApi.saveMessage(targetChatId, 'assistant', cleanReply).catch(() => {})
+            if (browserComputeOnly) {
+              const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(cleanReply)))
+              const suffix = Array.from(digest.slice(0,8), (byte) => byte.toString(16).padStart(2,'0')).join('')
+              await chatApi.saveMessage(targetChatId, 'assistant', cleanReply, undefined, browserCheckpointId ? `${browserCheckpointId}:assistant:${suffix}` : undefined)
+            }
+            else chatApi.saveMessage(targetChatId, 'assistant', cleanReply).catch(() => {})
           }
 
           // The pipeline's last act is a PCB handoff, so the board run starts
@@ -646,29 +707,41 @@ export function ChatInterface({ projectId }: { projectId: string }) {
           // An interface revision exists to get a board that can be built, so
           // it always rebuilds — the old board was made from the old wiring.
           const shouldAutoBuildBoard =
-            !boardExistedBeforeThisRun || isPcbTargetedRevision || runAction === 'revise_interfaces'
+            browserComputeOnly || !boardExistedBeforeThisRun || isPcbTargetedRevision || runAction === 'revise_interfaces'
           if (
             handoffComponents > 0 &&
+            (!browserComputeOnly || payload.handoff_validation?.well_formed === true) &&
             runCompletedNodes.includes('pcb') &&
             shouldAutoBuildBoard &&
             useWorkspaceStore.getState().boardJob.status !== 'running'
           ) {
+            if (browserComputeOnly) setActiveNode('board')
             postAssistant(BOARD_STARTING, targetChatId)
 
-            await generateBoard()
+            await generateBoard({ alreadyConfirmed: browserComputeOnly, chatId: targetChatId })
+            if (browserController?.signal.aborted) throw new Error('Run cancelled')
 
             // generate() either reached startBoardJob, which means there is a
             // jobId for the watcher to match on, or it failed before getting
             // one (the POST itself was refused). The second case never produces
             // a state change the watcher can recognise, so it is reported here.
             const started = useWorkspaceStore.getState().boardJob
-            if (started.jobId) announcedBoardJobRef.current = { jobId: started.jobId, chatId: targetChatId }
+            if (browserComputeOnly) {
+              // Local generation is awaited until it finishes; registering the
+              // watcher now would miss the already-settled board job.
+              if (started.status === 'done') postAssistant(BOARD_DONE, targetChatId)
+              else if (started.status === 'error') postAssistant(boardFailure(started.error), targetChatId)
+            } else if (started.jobId) announcedBoardJobRef.current = { jobId: started.jobId, chatId: targetChatId }
             else if (started.status === 'error') postAssistant(boardFailure(started.error), targetChatId)
           }
 
           // Settled only now, after the board job (if any) is already running,
           // so the two overlap and the turn never looks idle in between.
           setPipelineRun(errors?.length || producedNothing ? 'error' : 'done')
+          if (browserComputeOnly) {
+            setLoading(false)
+            setActiveNode('')
+          }
         }
 
         const handleError = (socketData: Record<string, any>) => {
@@ -691,10 +764,46 @@ export function ChatInterface({ projectId }: { projectId: string }) {
           }
         }
 
-        socket.on('ai:progress', handleProgress)
-        socket.on('ai:complete', handleComplete)
-        socket.on('ai:error', handleError)
-      } catch {
+        if (browserComputeOnly) {
+          const { runBrowserPipeline } = await import('@/lib/browser-pipeline/run-browser-pipeline')
+          const payload = await runBrowserPipeline(request,
+            messages.map((message) => ({ role: message.role, content: message.content })),
+            (stage) => handleProgress({ node: stage }), browserController?.signal,
+            useWorkspaceStore.getState().aiOutput,
+            runRecoveryKey ? { key: runRecoveryKey, resume } : undefined)
+          if (browserController?.signal.aborted) throw new Error('Run cancelled')
+          const checkpoint = runRecoveryKey ? await readCheckpoint(runRecoveryKey) : null
+          browserCheckpointId = checkpoint?.id
+          if (targetChatId) await chatApi.saveMessage(targetChatId, 'user', request, undefined, checkpoint ? `${checkpoint.id}:user` : undefined)
+          await handleComplete({ data: payload })
+          if (runRecoveryKey && !payload.errors.length && useWorkspaceStore.getState().boardJob.status !== 'error') {
+            await clearCheckpoint(runRecoveryKey)
+            setResumeRequest(null)
+          } else if (runRecoveryKey) {
+            setResumeRequest(request)
+          }
+          browserAbortRef.current = null
+          browserRunActiveRef.current = false
+          browserRunTargetRef.current = null
+          return
+        }
+        socket?.on('ai:progress', handleProgress)
+        socket?.on('ai:complete', handleComplete)
+        socket?.on('ai:error', handleError)
+      } catch (error: unknown) {
+        if (browserComputeOnly) {
+          browserAbortRef.current = null
+          browserRunActiveRef.current = false
+          browserRunTargetRef.current = null
+          if (useWorkspaceStore.getState().activeChatId !== targetChatId) return
+          const message = error instanceof Error ? error.message : 'Browser design run failed'
+          setMessages((prev) => [...prev, { id: `${Date.now()}-assistant`, role: 'assistant', content: `⚠️ ${message}` }])
+          setPipelineRun('error')
+          setLoading(false)
+          setActiveNode('')
+          if (runRecoveryKey && await readCheckpoint(runRecoveryKey).catch(() => null)) setResumeRequest(request)
+          return
+        }
         try {
           const chatRes = (await aiApi.chat(projectId, request)) as { reply?: string }
           const hasReply = Boolean(chatRes?.reply?.trim())
@@ -720,7 +829,7 @@ export function ChatInterface({ projectId }: { projectId: string }) {
         }
       }
     },
-    [projectId, activeChatId, setActiveChatId, messages, setAiOutput, setActiveTab, setPipelineRun, updateProject, updateChatArtifacts, generateBoard, postAssistant]
+    [projectId, activeChatId, setActiveChatId, messages, setAiOutput, setActiveTab, setPipelineRun, updateProject, updateChatArtifacts, generateBoard, postAssistant, user?._id]
   )
 
   // Auto-run initial prompt passed from new project initial screen.
@@ -750,11 +859,12 @@ export function ChatInterface({ projectId }: { projectId: string }) {
     const customAnswer = input.trim()
     const request = [
       selectedOptions.length > 0 ? `Selected answers:\n- ${selectedOptions.join('\n- ')}` : '',
-      attachments.length > 0 ? `Attached file(s): ${attachments.map((a) => a.name).join(', ')}` : '',
+      attachments.length > 0 ? attachments.map((a) => a.text ? `Reference file ${a.name}:\n${a.text}` : `Attached file: ${a.name}`).join('\n\n') : '',
       customAnswer,
     ]
       .filter(Boolean)
       .join('\n\n')
+    if (browserComputeOnly && request.length > 2500) { toast.error('Request and reference files must fit within 2,500 characters. Shorten the reference or description.'); return }
     setInput('')
     setSelectedOptions([])
     setActiveQuestionId(null)
@@ -774,12 +884,21 @@ export function ChatInterface({ projectId }: { projectId: string }) {
     if (!file) return
     setUploadingFile(true)
     try {
+      if (browserComputeOnly) {
+        if (!/\.(txt|md|csv|json)$/i.test(file.name)) throw new Error('Attach a text, Markdown, CSV or JSON reference. Paste relevant datasheet text for PDF documents.')
+        if (file.size > 6000 || attachments.length >= 3) throw new Error('Attach up to three small text references (6 KB each)')
+        const text = await file.text()
+        if (!text.trim() || text.length > 2000 || text.includes('\u0000')) throw new Error('Reference must contain readable text within 2,000 characters')
+        setAttachments((prev) => [...prev, { id: crypto.randomUUID(), name: file.name, text }])
+        toast.success(`Attached ${file.name}`)
+        return
+      }
       const res = (await fileApi.upload(file, projectId)) as { _id?: string; id?: string }
       const id = res?._id || res?.id || `${Date.now()}`
       setAttachments((prev) => [...prev, { id, name: file.name }])
       toast.success(`Attached ${file.name}`)
-    } catch {
-      toast.error(`Failed to upload ${file.name}`)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : `Failed to upload ${file.name}`)
     } finally {
       setUploadingFile(false)
     }
@@ -818,19 +937,21 @@ export function ChatInterface({ projectId }: { projectId: string }) {
         </div>
       )}
       <div className="flex h-[58px] items-center gap-2 rounded-full border border-foreground/15 bg-card/90 px-3 shadow-[0_14px_50px_rgba(0,0,0,0.22)] backdrop-blur-md transition-colors focus-within:border-foreground/35">
-        <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileSelected} />
+        <input ref={fileInputRef} type="file" accept={browserComputeOnly ? '.txt,.md,.csv,.json' : undefined} className="hidden" onChange={handleFileSelected} />
         <Button
           type="button"
           variant="ghost"
           size="icon"
           onClick={() => fileInputRef.current?.click()}
-          disabled={uploadingFile}
+          disabled={uploadingFile || loading}
           className="h-9 w-9 shrink-0 rounded-full text-muted-foreground hover:text-foreground"
-          title="Attach a file"
+          title={browserComputeOnly ? 'Attach a small text reference' : 'Attach a file'}
         >
           {uploadingFile ? <Loader2 className="h-4 w-4 animate-spin" /> : <Paperclip className="h-4 w-4" />}
         </Button>
-        <ModelSelector value={selectedModel} onChange={setSelectedModel} disabled={loading} />
+        {browserComputeOnly
+          ? <span className="rounded-full border px-3 py-1.5 text-xs">Groq · browser pipeline</span>
+          : <ModelSelector value={selectedModel} onChange={setSelectedModel} disabled={loading} />}
         <Input
           value={input}
           onChange={(e) => setInput(e.target.value)}
@@ -870,11 +991,25 @@ export function ChatInterface({ projectId }: { projectId: string }) {
         >
           {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUp className="h-4 w-4" />}
         </Button>
+        {browserComputeOnly && loading && <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            browserAbortRef.current?.abort()
+            if (useWorkspaceStore.getState().boardJob.status === 'running') cancelBoard()
+          }}
+        >Cancel</Button>}
       </div>
       <p className="mt-3 text-center text-[11px] text-muted-foreground">
-        {billingEnabled && 'Design runs reserve up to 30 credits; an automatic PCB build reserves up to 101 more. '}
+        {billingEnabled && (browserComputeOnly
+          ? 'A design uses one hosted model request, plus one for applicable firmware. Each request is 2 credits after free requests; local PCB work uses no credits. '
+          : process.env.NEXT_PUBLIC_BROWSER_PCB_ENABLED === 'true'
+            ? 'Design runs reserve up to 30 credits; supported browser PCB previews use no board credits. '
+            : 'Design runs reserve up to 30 credits; an automatic PCB build reserves up to 101 more. ')}
         Review generated engineering decisions before manufacturing.
       </p>
+      {browserComputeOnly && resumeRequest && !loading && <Button variant="outline" size="sm" className="mt-2" onClick={() => runAgent(resumeRequest, 'run_workflow', true)}>Resume interrupted run</Button>}
     </div>
   )
 

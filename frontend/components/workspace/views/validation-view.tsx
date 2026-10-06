@@ -44,6 +44,8 @@ interface ValidationViewProps {
   projectId: string
 }
 
+const browserComputeOnly = process.env.NEXT_PUBLIC_BROWSER_COMPUTE_ONLY === 'true'
+
 interface HandoffIssue {
   severity?: string
   code?: string
@@ -286,6 +288,7 @@ function BoardSection({ board }: { board: BoardArtifact | null }) {
   const unresolved = stats.unresolvedComponents ?? 0
   const placeholders = stats.placeholderPinComponents ?? 0
   const substituted = stats.substitutedComponents ?? 0
+  const unverifiedPreview = board.verified === false
 
   return (
     <Card className="border-border/70 bg-card/85 shadow-sm">
@@ -297,17 +300,24 @@ function BoardSection({ board }: { board: BoardArtifact | null }) {
               Board (DRC)
             </CardTitle>
             <CardDescription className="mt-1">
-              Did the board route, and can it be fabricated? Checked after generation.
+              {unverifiedPreview
+                ? 'Local routing preview. Electrical and manufacturing checks have not been completed.'
+                : 'Did the board route, and can it be fabricated? Checked after generation.'}
             </CardDescription>
           </div>
           <Verdict
-            tone={errors > 0 ? 'bad' : warnings > 0 ? 'warn' : 'good'}
-            label={errors > 0 ? `${errors} DRC error${errors !== 1 ? 's' : ''}` : 'DRC clean'}
+            tone={errors > 0 ? 'bad' : unverifiedPreview || warnings > 0 ? 'warn' : 'good'}
+            label={unverifiedPreview ? 'Unverified preview' : errors > 0 ? `${errors} DRC error${errors !== 1 ? 's' : ''}` : 'DRC clean'}
           />
         </div>
       </CardHeader>
 
       <CardContent className="space-y-4">
+        {unverifiedPreview && (
+          <p className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm leading-6">
+            This browser board is a preview only. Zero reported routing errors does not verify its pinout, electrical behavior, footprint, or fabrication readiness.
+          </p>
+        )}
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <Stat
             label="DRC errors"
@@ -397,6 +407,9 @@ export function ValidationView({ projectId: _projectId }: ValidationViewProps) {
 
   const exportReport = () => {
     const lines: string[] = ['# Validation report', '']
+    if (browserComputeOnly || board?.verified === false) {
+      lines.push('UNVERIFIED BROWSER PREVIEW — not an electrical or manufacturing approval.', '')
+    }
 
     lines.push('## Handoff (pre-generation)')
     if (handoff) {
@@ -463,6 +476,12 @@ export function ValidationView({ projectId: _projectId }: ValidationViewProps) {
               Export Report
             </Button>
           </div>
+
+          {browserComputeOnly && (
+            <p className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm leading-6">
+              Browser results are structural previews from client-side data. They do not verify electrical safety, pinouts, or fabrication readiness.
+            </p>
+          )}
 
           <HandoffSection handoff={handoff} isV2={isV2} />
           <BoardSection board={board} />

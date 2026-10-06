@@ -135,6 +135,10 @@ function Board({ progress, reducedMotion }: { progress: MutableRefObject<number>
   const { camera, size } = useThree();
 
   const segments = useMemo(buildSegments, []);
+  // tscircuit's JSX `group` props share the intrinsic name with R3F. Use
+  // concrete Three.js groups so both type packages can coexist safely.
+  const rootGroup = useMemo(() => new THREE.Group(), []);
+  const partGroups = useMemo(() => PARTS.map(() => new THREE.Group()), []);
   const partIndex = useMemo(() => Object.fromEntries(PARTS.map((p, i) => [p.id, i])), []);
 
   const outlineGeometry = useMemo(() => {
@@ -306,7 +310,7 @@ function Board({ progress, reducedMotion }: { progress: MutableRefObject<number>
   });
 
   return (
-    <group ref={root}>
+    <primitive object={rootGroup} ref={root}>
       <mesh ref={substrate}>
         <boxGeometry args={[BOARD.w, BOARD.t, BOARD.d]} />
         <meshStandardMaterial color={colors.mask} roughness={0.55} metalness={0.1} transparent opacity={0} />
@@ -356,9 +360,9 @@ function Board({ progress, reducedMotion }: { progress: MutableRefObject<number>
 
       {/* Parts */}
       {PARTS.map((part, i) => (
-        <group key={part.id} ref={(g) => { parts.current[i] = g; }} position={[part.pos[0], BOARD.t / 2, part.pos[1]]}>
+        <primitive key={part.id} object={partGroups[i]} ref={(g: THREE.Group | null) => { parts.current[i] = g; }} position={[part.pos[0], BOARD.t / 2, part.pos[1]]}>
           <PartBody part={part} colors={colors} bodyRef={(m) => { partBodies.current[i] = m; }} />
-        </group>
+        </primitive>
       ))}
 
       {/* Copper */}
@@ -377,7 +381,7 @@ function Board({ progress, reducedMotion }: { progress: MutableRefObject<number>
         <boxGeometry args={[0.03, 0.9, BOARD.d + 0.5]} />
         <meshBasicMaterial color={colors.scan} transparent opacity={0.55} />
       </mesh>
-    </group>
+    </primitive>
   );
 }
 

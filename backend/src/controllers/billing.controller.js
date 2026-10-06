@@ -7,6 +7,7 @@ import { walletSummary } from '../services/credits.service.js';
 import { createCheckout, handleStripeEvent, verifyStripeEvent } from '../services/stripe.service.js';
 import { CreditEntry } from '../models/CreditEntry.js';
 import { ApiError } from '../utils/ApiError.js';
+import { env } from '../config/env.js';
 
 export const plans = asyncHandler(async (_req, res) => {
   res.set('Cache-Control', 'public, max-age=300');
@@ -27,6 +28,9 @@ export const entries = asyncHandler(async (req, res) => {
 });
 
 export const quote = asyncHandler(async (req, res) => {
+  if (env.browserComputeOnly && req.query.action !== 'browser_inference') {
+    throw ApiError.badRequest('Only browser inference is billable in browser computation mode');
+  }
   send(res, { data: creditQuote({ action: req.query.action, byok: req.query.byok === 'true' }) });
 });
 

@@ -278,7 +278,9 @@ export function BOMView({ projectId }: BOMViewProps) {
                   ) : (
                     <CircuitBoard className="w-4 h-4 mr-2" />
                   )}
-                  {job.status === 'running' ? 'Generating…' : billingEnabled ? 'Generate PCB · up to 101 credits' : 'Generate PCB'}
+                  {job.status === 'running' ? 'Generating…' : process.env.NEXT_PUBLIC_BROWSER_COMPUTE_ONLY === 'true' || process.env.NEXT_PUBLIC_BROWSER_PCB_ENABLED === 'true'
+                    ? 'Generate on this device · 0 board credits'
+                    : billingEnabled ? 'Generate PCB · up to 101 credits' : 'Generate PCB'}
                 </Button>
               )}
             </div>

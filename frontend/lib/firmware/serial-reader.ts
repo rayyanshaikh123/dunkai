@@ -6,6 +6,7 @@ export class SerialReader {
   private notify: (() => void) | null = null
   private reader: ReadableStreamDefaultReader<Uint8Array>
   private pumping: Promise<void>
+  private failure: Error | null = null
 
   constructor(port: SerialPort) {
     if (!port.readable) throw new Error('Serial port is not open')
@@ -19,18 +20,23 @@ export class SerialReader {
         const { value, done } = await this.reader.read()
         if (done) break
         if (value) {
+          if (this.buffer.length + value.length > 100_000) throw new Error('Serial device exceeded the receive buffer limit')
           for (const b of value) this.buffer.push(b)
           this.notify?.()
         }
       }
-    } catch {
-      // Port closed or device unplugged; pending reads time out.
+      this.failure = new Error('Serial device disconnected')
+    } catch (error) {
+      this.failure = error instanceof Error ? error : new Error('Serial device disconnected')
+    } finally {
+      this.notify?.()
     }
   }
 
   async read(count: number, timeoutMs: number): Promise<Uint8Array> {
     const deadline = Date.now() + timeoutMs
     while (this.buffer.length < count) {
+      if (this.failure) throw this.failure
       const remaining = deadline - Date.now()
       if (remaining <= 0) throw new SerialTimeoutError(`Timed out waiting for ${count} byte(s) from the board`)
       await new Promise<void>((resolve) => {

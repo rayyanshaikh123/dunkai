@@ -2,29 +2,35 @@
 
 Dunk AI is an AI-powered hardware copilot that turns a natural-language hardware idea into a structured engineering design package.
 
-The platform combines a Next.js web workspace, a Node.js API backend, and a Python AI engine. Users describe what they want to build, collaborate through project chat, and receive engineering outputs such as requirements, architecture, component recommendations, circuit and PCB guidance, validation results, and documentation.
+The browser deployment combines a Next.js workspace, a Node.js API and MongoDB Atlas. Users describe hardware projects and receive requirements, architecture, component data, PCB previews, firmware source and documentation. Heavy design computation runs on the visitor's device in Web Workers; model inference runs remotely on Groq through the authenticated Node API.
 
-The INR credit and PCB launch implementation is documented in [the launch runbook](docs/LAUNCH_RUNBOOK.md) and [the audit and pricing plan](docs/PCB_CREDITS_LAUNCH_PLAN.md). Billing is disabled in the Render blueprint until its payment, security, and PCB release checks pass. Fabrication files are blocked pending independent checks and human approval.
+**Every user's desktop browser** follows the same path after a simple confirmation. Enable `BROWSER_COMPUTE_ONLY=true` on the API and build the frontend with `NEXT_PUBLIC_BROWSER_COMPUTE_ONLY=true`. No installed companion, local LLM, Python engine, Redis worker or tunnel is needed. Use [the deployment runbook](docs/LAUNCH_RUNBOOK.md) with your existing frontend, Node host and Atlas.
+
+The runtime supports passives, NE555P and general exact catalogue-backed components with verified structural pin/pad correspondence, including schema 2.0 nets. Missing geometry or unresolved mappings become review findings. Firmware supports local Uno/Nano AVR C/C++ compilation with Wire/SPI and MicroPython source delivery for ESP32/RP2040. [Support bounds and test evidence](docs/BROWSER_COMPUTE_PLAN.md) distinguish implemented behavior from electrical/fabrication approval and live deployment acceptance.
+
+Verified accounts receive five hosted model requests per UTC month; each additional request costs two credits. Applicable firmware uses a second request. Local compute and Groq BYOK use zero DunkAI credits. Free quota enforcement works while Stripe purchases are disabled. `render.yaml` now provisions only the free Node API; the paid legacy blueprint is `render.cloud.yaml`. Fabrication files remain blocked pending independent checks and human approval.
 
 ## Architecture
 
-![Dunk AI system architecture](docs/dunk-ai-architecture.png)
+The legacy cloud-engine architecture diagram is preserved for reference:
+
+![Legacy Dunk AI system architecture](docs/dunk-ai-architecture.png)
 
 The supplied architecture diagram is preserved in [`docs/dunk-ai-architecture.png`](docs/dunk-ai-architecture.png).
 
 ### Request flow
 
 1. A user submits a hardware idea through the web frontend.
-2. The frontend calls the Dunk AI Node.js/Express backend.
-3. The backend authenticates the user and manages projects, chats, files, and persistence.
-4. The backend sends AI workflow requests to the Supervisor Agent.
-5. The Supervisor plans the workflow and routes work to the downstream Python agents.
-6. Agent outputs are streamed via WebSockets back to the frontend, updating the interactive workspace tabs in real-time.
-7. Outputs are validated, persisted, and assembled into an Engineering Design Package.
+2. The website asks for local computation confirmation and checkpoints the request.
+3. A browser worker orchestrates design stages; the Node API authenticates and meters bounded Groq inference using the operator key or encrypted BYOK.
+4. Browser workers resolve component pins/footprints, map nets, place/route the board and prepare previews.
+5. Applicable firmware is generated, edited and compiled locally for supported targets.
+6. Private project artifacts are saved through the Node API to Atlas. Interrupted runs reuse saved stage answers.
+7. The user downloads a review ZIP, previews and source/HEX files. Engineering review is required before hardware fabrication or operation.
 
-## Important service boundary
+## Legacy cloud service boundary
 
-The Node.js backend has access to the Supervisor Agent only. It must not call the Requirement, Architecture, Component Intelligence, Circuit & PCB, Validation, or Documentation agents directly. Those agents are internal to the Python AI engine and are coordinated by the Supervisor.
+With browser mode disabled, the original Node/Python path remains available: Node calls the Supervisor rather than individual Python agents. Deploy it using `render.cloud.yaml` and [the legacy runbook](docs/CLOUD_ENGINE_RUNBOOK.md). The browser deployment rejects Python workflow and server compiler routes.
 
 The `ai_engine/` directory is an independent Python/LangGraph/LangChain system. The Node.js backend communicates with it through the configured Supervisor HTTP endpoint. This separation keeps API concerns and AI orchestration concerns independent.
 
@@ -118,12 +124,14 @@ See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for the compose setup and for hos
 Users can add their own **Groq**, **Gemini** and **Anthropic** keys in Settings → API keys. Groq powers every pipeline agent, and all three can build boards.
 
 - A key is verified with the provider when saved, encrypted with AES-256-GCM (`BYOK_ENCRYPTION_KEY`), and never returned to the browser except as `gsk_…a1b2`.
-- At run time the backend decrypts it into the supervisor request only. The AI engine applies it per request through a context variable (`ai_engine/agents/credentials.py`), never through `os.environ`, so concurrent users never see each other's keys. The designer subprocess gets it in its own environment copy.
+- In the legacy cloud path, the backend passes the decrypted key to the supervisor per request. In experimental browser mode, the Node backend uses the key only for the authenticated Groq relay; the browser never receives it.
 - A user's key pays its provider tokens. When credits are enabled, pipeline compute is 10 credits and board compute/export is 20 credits.
 
 ## Plans
 
 Freemium with prepaid INR credits is configured in `backend/src/config/credits.js`. A verified account receives 150 one-time trial credits and five hosted AI chat turns per UTC month. Packs are 200 credits/₹200, 500/₹500, and 1,500/₹1,500. Chat, pipeline, and Groq board runs quote 2, 30, and 101 credits respectively; BYOK pipeline and board compute quote 10 and 20. Credits are enforced only when `BILLING_ENABLED=true`. See the [launch runbook](docs/LAUNCH_RUNBOOK.md) before turning that switch on.
+
+Browser mode gives verified accounts five hosted model requests per UTC month with **no new 150-credit trial grant**. A hosted inference request costs 2 credits after free requests; BYOK and local work use no DunkAI credits. A non-MCU project typically uses one request (2 credits), and a supported MCU project with firmware uses two (4 credits). Existing wallet balances are retained when switching modes. These quotas are enforced even with Stripe disabled.
 
 ## Main API groups
 

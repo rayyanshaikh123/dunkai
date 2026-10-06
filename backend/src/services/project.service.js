@@ -5,6 +5,10 @@ import { logActivity } from '../helpers/activity.js';
 import { notify } from '../helpers/notification.js';
 import { assertCanCreateProject } from './billing.service.js';
 import { env } from '../config/env.js';
+import mongoose from 'mongoose';
+import { Chat } from '../models/Chat.js';
+import { Message } from '../models/Message.js';
+import { BrowserBoard } from '../models/BrowserBoard.js';
 
 const EDITABLE_FIELDS = ['title', 'description', 'tags', 'status', 'isFavourite'];
 const ARTIFACT_FIELDS = ['requirements', 'architecture', 'bom', 'eda_data', 'pcb_ir', 'validation',
@@ -119,7 +123,17 @@ export const deleteProject = async (id, user, req = null) => {
   const project = await Project.findOne({ _id: id, owner: user._id });
   if (!project) throw ApiError.notFound('Project not found or you are not the owner');
 
-  await project.deleteOne();
+  if (env.browserComputeOnly) {
+    // Browser boards live in Atlas; remove private chat data with the owning
+    // project so deleting projects does not leave orphaned previews forever.
+    await mongoose.connection.transaction(async (session) => {
+      const chats = await Chat.find({ project: project._id }).select('_id').session(session);
+      await Message.deleteMany({ chat: { $in: chats.map((chat) => chat._id) } }, { session });
+      await BrowserBoard.deleteMany({ project: project._id }, { session });
+      await Chat.deleteMany({ project: project._id }, { session });
+      await Project.deleteOne({ _id: project._id, owner: user._id }, { session });
+    });
+  } else await project.deleteOne();
 
   await logActivity('project_deleted', user._id, { projectId: id }, req);
   return project;

@@ -9,6 +9,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { resolveCredentials } from './apiKey.service.js';
 import { reserveCharge, settleCharge } from './credits.service.js';
 import { env } from '../config/env.js';
+import { BrowserBoard } from '../models/BrowserBoard.js';
 
 // ---- Get a chat owned by the user ----
 
@@ -83,20 +84,27 @@ export const getMessages = async (chatId, user, query = {}) => {
 
 // ---- Save message directly without triggering supervisor AI ----
 
-export const saveMessage = async (chatId, { type = 'user', content, metadata = {}, options = [] }, user) => {
+export const saveMessage = async (chatId, { type = 'user', content, metadata = {}, options = [], clientMessageId }, user) => {
   const chat = await getOwnedChat(chatId, user);
-
-  const message = await Message.create({
+  if (!['user', 'assistant'].includes(type) || typeof content !== 'string' || !content.trim() || content.length > 20000) throw ApiError.badRequest('Invalid chat message');
+  if (clientMessageId !== undefined && (typeof clientMessageId !== 'string' || !/^[A-Za-z0-9:_-]{1,120}$/.test(clientMessageId))) throw ApiError.badRequest('Invalid client message ID');
+  if (!Array.isArray(options) || options.length > 8 || options.some((option) => typeof option !== 'string' || option.length > 240) || JSON.stringify(metadata).length > 50000) throw ApiError.badRequest('Invalid message metadata');
+  let message;
+  try { message = await Message.create({
     chat: chat._id,
     sender: type === 'user' ? user._id : undefined,
     type,
     content,
+    ...(clientMessageId ? { clientMessageId } : {}),
     metadata: { ...metadata, options },
-  });
+  }); } catch (error) {
+    if (!clientMessageId || error?.code !== 11000) throw error;
+    const saved = await Message.findOne({ chat: chat._id, clientMessageId });
+    if (!saved || saved.type !== type || saved.content !== content) throw ApiError.conflict('Client message ID already used');
+    return saved;
+  }
 
-  chat.messageCount += 1;
-  chat.lastMessageAt = new Date();
-  await chat.save();
+  await Chat.updateOne({ _id: chat._id }, { $inc: { messageCount: 1 }, $set: { lastMessageAt: new Date() } });
 
   return message;
 };
@@ -104,6 +112,7 @@ export const saveMessage = async (chatId, { type = 'user', content, metadata = {
 // ---- Send message (stores user message, calls supervisor, stores assistant reply) ----
 
 export const sendMessage = async (chatId, { content, attachments = [], agentType }, user, req = null) => {
+  if (env.browserComputeOnly) throw new ApiError(503, 'The Python chat engine is disabled; use browser computation');
   const chat = await getOwnedChat(chatId, user);
   const jobId = uuidv4();
   const credentials = await resolveCredentials(user._id);
@@ -185,7 +194,14 @@ export const renameChat = async (id, title, user) => {
 // ---- Update this chat's pipeline artifacts (requirements/architecture/etc) ----
 
 export const updateArtifacts = async (id, data, user) => {
-  if (env.billingEnabled) throw ApiError.forbidden('Design artifacts are saved by the server after each run');
+  if (env.billingEnabled && !env.browserComputeOnly) throw ApiError.forbidden('Design artifacts are saved by the server after each run');
+  if (!data || typeof data !== 'object' || Array.isArray(data)) throw ApiError.badRequest('Design artifacts must be an object');
+  if (env.browserComputeOnly) {
+    if (Object.hasOwn(data, 'board') || Object.hasOwn(data, 'validation')) {
+      throw ApiError.forbidden('Browser clients cannot assert a verified board or manufacturing validation');
+    }
+    if (JSON.stringify(data).length > 200_000) throw ApiError.badRequest('Browser design artifacts are too large');
+  }
   const chat = await getOwnedChat(id, user);
   for (const key of ARTIFACT_KEYS) {
     if (data[key] === undefined) continue;
@@ -202,6 +218,7 @@ export const deleteChat = async (id, user) => {
   const chat = await getOwnedChat(id, user);
   await chat.deleteOne();
   await Message.deleteMany({ chat: id });
+  await BrowserBoard.deleteMany({ chat: id, user: user._id });
   return chat;
 };
 

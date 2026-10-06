@@ -1,26 +1,78 @@
-# PCB credits launch runbook
+# Browser runtime deployment runbook
 
-## Current state
+Use your existing frontend host, Node backend and MongoDB Atlas. The remaining AI engine is delivered as browser code and workers; there is no separate AI engine to host. `render.yaml` now describes a free Node API only. The previous paid engine/Redis/worker blueprint is preserved as `render.cloud.yaml` for the legacy cloud path. Do not apply a new blueprint to replace existing services blindly; for your hosted API, update its environment and redeploy it.
 
-The app has code for freemium credits, INR Stripe Checkout, a transactional MongoDB wallet, a Redis queue/worker, authenticated design artifacts, and a Render blueprint. `BILLING_ENABLED=false` in `render.yaml`; purchases and trial grants remain unavailable until the gates below are verified. Gerber ZIP delivery is blocked, including for paid users. The published operation debits are fixed at 2 chat, 30 pipeline, and 101 hosted Groq board credits (10/20 for BYOK pipeline/board). The backend records provider token usage, but it does not yet calculate debits from real provider cost. The estimates in `PCB_CREDITS_LAUNCH_PLAN.md` are planning examples, not measured margins.
+## 1. Existing Node backend
 
-## Provisioning
+Keep the existing database and auth/encryption secrets. Set these in the host's environment dashboard:
 
-1. Create MongoDB Atlas as a replica set, with backups and a restricted network path. Run the backend against the intended database; billing startup rejects a standalone MongoDB. Preserve `BYOK_ENCRYPTION_KEY` permanently or user keys become unreadable.
-2. Create the Render Blueprint from `render.yaml`: public API, private Python engine, Redis Key Value, and AI worker. The engine owns board output at `/data/boards`; the API proxies authorized board files from the private service. Set `SUPERVISOR_AGENT_TOKEN` to the **same value** on API and engine, and supply the engine's Groq and Hugging Face keys. Verify the private engine is unreachable from the internet.
-3. Set the Vercel project root to `frontend/`. Set `BACKEND_URL=https://<Render API host>` in the Vercel **build** environment and `NEXT_PUBLIC_BACKEND_URL` to the same public API URL for sockets. Set API `FRONTEND_URL`, `CLIENT_ORIGIN`, and `CORS_ORIGINS` to the exact Vercel origin. Configure Google OAuth callback at `https://<Vercel host>/api/v1/auth/google/callback` if Google sign-in is used.
-4. Configure API SMTP (`EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USER`, `EMAIL_PASS`, `EMAIL_FROM`) and test registration, email verification, resend, and password reset. Verified email or Google identity is required for the trial grant. Then complete activation in the Indian Stripe account and review tax and invoice treatment. Set `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` on the API. Subscribe the endpoint `https://<Render API host>/api/v1/billing/webhook` to `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `charge.refunded`, and `charge.dispute.created`. Use test keys and the matching test webhook secret first. The browser's success redirect never grants credits.
-5. Confirm the API disk persists uploaded files and the engine disk persists boards after a redeploy. Define backup, cleanup, and retention. Move old Cloudinary public artifacts to private storage before claiming private designs; new uploads use local storage while billing is enabled. S3-compatible private object storage is the intended durable replacement for both disks.
+```dotenv
+NODE_ENV=production
+BROWSER_COMPUTE_ONLY=true
+BILLING_ENABLED=false
+AI_QUEUE_ENABLED=false
+GROQ_API_KEY=<operator-groq-key>
+GROQ_BROWSER_MODEL=openai/gpt-oss-120b
+MONGODB_URI=<existing-atlas-connection-string>
+JWT_ACCESS_SECRET=<existing-secret>
+JWT_REFRESH_SECRET=<existing-secret>
+BYOK_ENCRYPTION_KEY=<existing-encryption-secret>
+FRONTEND_URL=https://<your-frontend-host>
+CLIENT_ORIGIN=https://<your-frontend-host>
+COOKIE_SECURE=true
+COOKIE_SAMESITE=lax
+COOKIE_DOMAIN=
+TRUST_PROXY=1
+RATE_LIMIT_MAX=300
+AUTH_RATE_LIMIT_MAX=10
+```
 
-## Acceptance checks before enabling billing
+Use a valid enabled Groq model for that account. The operator key can be omitted if all users use Groq BYOK. The API verifies/encrypts their keys in Settings. Only Groq is used by this browser pipeline, even if legacy Settings lists other providers.
 
-- Run `npm run test:credits` in `backend/`, `npm test` in `dunkai-designer/`, and `npm run typecheck` in `frontend/`. Python dependencies are needed for the AI tests and actual pipeline runs.
-- With a real Stripe test account, buy each pack, retry the same signed webhook, reject altered signatures and amount mismatches, then refund and dispute a payment. Reconcile Stripe payment IDs with `Payment`, `CreditEntry`, and `Wallet` records.
-- Run an authenticated project and board job through Vercel, Render API, Redis worker, private engine, and Atlas. Verify socket replay after reconnect, cancellation, restart recovery, cross-user denial for jobs and artifacts, and board access after browser disconnect.
-- In the deployed Linux container, verify bubblewrap can create mount, PID, and network namespaces. Run a known-good and deliberately bad board fixture. Confirm generated TSX cannot read service credentials or reach the network. Keep `BOARD_SANDBOX_REQUIRED=true`.
-- Validate Gerber layers, drill files, net connectivity, footprint/pad mappings, DRC/ERC, and unresolved substitutions with an independent tool, then require human approval before enabling any fabrication export. There is no such approval flow yet, so downloads must remain blocked.
-- Collect at least 100 anonymized real jobs and compare per-call model/input/output/cached tokens, retries, runtime, and Stripe fees to quoted credits. Review median and p90 margins and change the versioned tariff if needed. Model calls that fail without usage metadata may still need provider invoice reconciliation.
-- Verify abuse limits for new accounts, a launch-wide free-spend cap, monitored negative balances, stuck jobs, and Groq spend alerts. Review Indian tax, terms, and credit refund treatment with the merchant's adviser.
-- Review the nine moderate production dependency advisories in `dunkai-designer` before public fabrication export. The available npm fix would change the pinned tscircuit generation and requires PCB fixture validation. Backend and frontend production dependency audits currently report zero findings after compatible updates.
+Atlas must support transactions; startup verifies the replica set and creates the unique replay, wallet/ledger, monthly usage, message and board indexes before accepting requests. Allow the Node host in Atlas network access. Preserve `BYOK_ENCRYPTION_KEY` when redeploying. No supervisor token, Redis URL or AI worker is needed in browser mode.
 
-Only then set `BILLING_ENABLED=true` on **both** Render API and worker and deploy the same revision. Checkout requires a verified account. If any payment, isolation, or artifact check fails, keep billing disabled and Gerber export blocked.
+Configure at least one working verified sign-in route: SMTP for registration, verification and password reset, or Google OAuth for Google sign-in. Google callback should use the frontend rewrite: `https://<your-frontend-host>/api/v1/auth/google/callback`. SMTP uses `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USER`, `EMAIL_PASS`, `EMAIL_FROM`; Google uses `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`. With neither configured, do not expect unverified accounts to receive hosted free requests.
+
+Render backend root is `backend`, build `npm ci --omit=dev`, start `npm start`, Node 22, health `/health`. The existing free service may sleep; allow its first request to wake it before testing a design. Browser board files are private Atlas records, not files on an ephemeral API disk. Text references stay in browser memory and the saved model request/project context.
+
+Locally the Node app loads `backend/.env` by default. **It does not automatically load `backend/.env.local`.** Set `DOTENV_CONFIG_PATH=.env.local npm run dev` from `backend/` to use that file, or copy intended values into `.env`. Host dashboard variables take precedence.
+
+## 2. Existing frontend (Vercel)
+
+Project root: `frontend`. Build command: `npm run build`. Set all four variables before rebuilding:
+
+```dotenv
+BACKEND_URL=https://<your-node-backend-host>
+NEXT_PUBLIC_BACKEND_URL=https://<your-node-backend-host>
+NEXT_PUBLIC_SITE_URL=https://<your-frontend-host>
+NEXT_PUBLIC_BROWSER_COMPUTE_ONLY=true
+```
+
+Do not put a Groq key, Atlas URI, Stripe secret or encryption key into frontend variables. The `/api` rewrite uses `BACKEND_URL` at build time; cookies remain first-party on the frontend domain. Rebuilding is required after changing these variables. The prebuild prepares the PCB worker and downloads the pinned compiler assets, verifies their SHA-256 hashes and publishes compressed WASM files under `/vendor/avr/`. The toolchain source/license links ship with those files.
+
+## 3. Verify the deployed path
+
+1. Visit API `/health`, then sign in through the deployed frontend. Confirm the backend is awake and cookies persist.
+2. Check `/api/v1/billing/plans`: `meteringEnabled: true`, `billingEnabled: false`, five monthly free requests and browser inference rate two credits.
+3. Create a project. Start with a small resistor/NE555 design; accept the computation confirmation. Inspect browser Network: only `/ai/browser-inference`, project/chat storage and public catalogue calls. No `/ai/run-stream`, supervisor or server firmware compile request should occur.
+4. Confirm requirements, architecture, BOM, PCB previews, validation findings and docs appear. Reload; the private artifacts should persist. Try another account; its API must not return the first account's board.
+5. For a catalogue-backed ATMEGA328P-AU design, verify firmware appears. Compile an Uno target; download HEX. Physical upload requires a compatible board, reviewed source and a Web Serial browser. ESP32/RP2040 source upload requires preinstalled MicroPython.
+6. Download the project review ZIP and inspect its PCB IR, Circuit JSON, SVGs, BOM and source files. Manufacturing approval/Gerbers are deliberately unavailable.
+7. Cancel or refresh during a run, then resume. Completed model answers should be reused. A new request is needed for an explicitly failed model call, and already incurred provider usage cannot be undone.
+8. Confirm five hosted model requests exhaust the monthly free allowance; the sixth returns 402 without invoking Groq when credits are unavailable. BYOK remains available and uses its own provider quota.
+
+## 4. Enable purchases when ready
+
+The free model quota runs with Stripe disabled. To sell credits, configure the existing INR Stripe account and test Checkout plus signed webhook delivery before setting `BILLING_ENABLED=true`. Use `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` on the Node API only. Webhook path: `/api/v1/billing/webhook`. Event types: `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `charge.refunded`, `charge.dispute.created`.
+
+Test pack amounts, duplicate webhook replay, invalid signatures, refunds and disputes against the real test account. Credit grants come only from verified server webhook handling. Browser success redirects grant nothing. Keep SMTP configured for account recovery if purchases are enabled. Measure Groq usage and merchant fees before describing a profit margin. Existing packs: 200 credits/₹200, 500/₹500, 1500/₹1500. Each design uses two credits for one model request or four when a firmware request also applies, after the monthly free allowance. Local compute and BYOK use zero DunkAI credits.
+
+## Checks in the repository
+
+From `backend/`: `npm run test:credits`, `npm run test:browser-compute`, `npm run test:browser-free`. These use disposable MongoDB replica sets and mocked provider/payment responses.
+
+From `frontend/`: `npm run typecheck`, `npm run test:browser-pcb`, `NEXT_PUBLIC_BROWSER_COMPUTE_ONLY=true npm run build`. Install the target Playwright browsers before `NEXT_PUBLIC_BROWSER_COMPUTE_ONLY=true npm run test:e2e -- --project=chromium`. A running server can be used with `PLAYWRIGHT_BASE_URL`; it must be a browser-mode build for the workspace test. CI includes Chromium/Firefox/WebKit on Windows/macOS/Linux.
+
+Optional live provider smoke: `LIVE_GROQ_BROWSER_TEST=true PLAYWRIGHT_BASE_URL=http://127.0.0.1:3100 npm run test:e2e -- --project=chromium --grep 'live Groq'`. This permits one actual model request using the Node environment key, validates the real answer and routes its board in the browser. It uses provider quota and is skipped in ordinary tests/CI. The test runner keeps the key outside the browser.
+
+See [BROWSER_COMPUTE_PLAN.md](BROWSER_COMPUTE_PLAN.md) for implemented limits and test evidence. Existing free hosts cover the compute deployment baseline; remote Groq usage, service quotas, external catalogue availability and physical hardware still impose practical limits.

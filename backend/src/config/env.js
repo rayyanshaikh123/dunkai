@@ -26,6 +26,8 @@ const asTrustProxy = (val, fallback) => {
 const nodeEnv = required('NODE_ENV', 'development');
 const isProduction = nodeEnv === 'production';
 const isTest = nodeEnv === 'test';
+const browserComputeOnly = asBoolean(process.env.BROWSER_COMPUTE_ONLY || 'false');
+const billingEnabled = asBoolean(process.env.BILLING_ENABLED || 'false');
 
 export const env = Object.freeze({
   nodeEnv,
@@ -81,6 +83,10 @@ export const env = Object.freeze({
   supervisorUrl: required('SUPERVISOR_AGENT_URL', 'http://127.0.0.1:8000'),
   supervisorPath: required('SUPERVISOR_AGENT_PATH', '/api/v1/supervisor'),
   supervisorToken: process.env.SUPERVISOR_AGENT_TOKEN || '',
+  // Browser mode keeps model inference here, but never starts the Python engine.
+  browserComputeOnly,
+  groqApiKey: process.env.GROQ_API_KEY || '',
+  groqBrowserModel: process.env.GROQ_BROWSER_MODEL || 'openai/gpt-oss-120b',
 
   // BYOK: AES-256-GCM key for users' provider keys at rest. Any string; it is
   // hashed to 32 bytes. Rotating it makes stored keys unreadable (users re-enter).
@@ -88,7 +94,10 @@ export const env = Object.freeze({
 
   // Billing. Off by default, so local and self-hosted installs have no quotas.
   // The hosted service sets BILLING_ENABLED=true.
-  billingEnabled: asBoolean(process.env.BILLING_ENABLED || 'false'),
+  billingEnabled,
+  // Free hosted model requests still need an enforced quota when purchases
+  // are closed. Metering is independent from Stripe checkout availability.
+  creditMeteringEnabled: billingEnabled || browserComputeOnly,
   stripeSecretKey: process.env.STRIPE_SECRET_KEY || '',
   stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET || '',
   redisUrl: process.env.REDIS_URL || '',
@@ -134,6 +143,6 @@ if (isProduction && (env.accessSecret.includes('change-me') || env.refreshSecret
 if (isProduction && !env.byokEncryptionKey) {
   throw new Error('BYOK_ENCRYPTION_KEY must be configured in production (encrypts users\' API keys at rest)');
 }
-if (isProduction && !env.supervisorToken) {
+if (isProduction && !env.browserComputeOnly && !env.supervisorToken) {
   throw new Error('SUPERVISOR_AGENT_TOKEN must be configured in production');
 }

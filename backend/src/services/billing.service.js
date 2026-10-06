@@ -48,6 +48,7 @@ export const getUsageSummary = async (user) => {
   ]);
   return {
     billingEnabled: env.billingEnabled,
+    meteringEnabled: env.creditMeteringEnabled,
     period,
     wallet,
     usage: {

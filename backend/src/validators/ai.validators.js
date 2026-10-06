@@ -47,3 +47,11 @@ export const runValidation = [
 export const cancelValidation = [
   body('jobId').notEmpty().withMessage('Job ID is required'),
 ];
+
+export const browserInferenceValidation = [
+  body('purpose').optional().isIn(['design', 'firmware', 'revision']),
+  body('requestId').isUUID().withMessage('A request ID is required'),
+  body('messages').isArray({ min: 1, max: 12 }),
+  body('messages.*.role').isIn(['user', 'assistant']),
+  body('messages.*.content').isString().isLength({ min: 1, max: 6000 }),
+];

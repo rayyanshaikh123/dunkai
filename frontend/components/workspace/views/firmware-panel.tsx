@@ -9,6 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ApiError, firmwareApi } from '@/lib/api'
 import { flashEsp } from '@/lib/firmware/esp'
 import { flashStk500 } from '@/lib/firmware/stk500'
+import { browserFirmwareBoards, compileBrowserFirmware } from '@/lib/firmware/browser-compiler'
 import {
   decodeImage,
   type FirmwareBoard,
@@ -63,6 +64,8 @@ export function FirmwarePanel({
   onClose: () => void
 }) {
   const webSerial = typeof navigator !== 'undefined' && 'serial' in navigator
+  const browserMode = process.env.NEXT_PUBLIC_BROWSER_COMPUTE_ONLY === 'true'
+  const compileAbort = useRef<AbortController | null>(null)
 
   const [catalogue, setCatalogue] = useState<FirmwareBoardsResponse | null>(null)
   const [catalogueError, setCatalogueError] = useState<string | null>(null)
@@ -91,14 +94,15 @@ export function FirmwarePanel({
   const append = useCallback((line: string) => setLog((prev) => [...prev.slice(-400), line]), [])
 
   useEffect(() => {
-    firmwareApi
-      .boards(processingUnit)
+    ;(browserMode ? Promise.resolve(browserFirmwareBoards(processingUnit)) : firmwareApi.boards(processingUnit))
       .then((data) => {
         setCatalogue(data)
         if (data.suggestedBoardId) setBoardId(data.suggestedBoardId)
       })
       .catch((err) => setCatalogueError(err instanceof Error ? err.message : 'Could not load boards'))
-  }, [processingUnit])
+  }, [processingUnit, browserMode])
+  useEffect(() => () => compileAbort.current?.abort(), [])
+  useEffect(() => () => { if (build?.result.download.url) URL.revokeObjectURL(build.result.download.url) }, [build])
 
   // Block bodies: scrollIntoView returns a Promise in current Chromium, which React would treat as a cleanup.
   useEffect(() => {
@@ -178,7 +182,10 @@ export function FirmwarePanel({
     setOutcome(null)
     setLog([`Compiling for ${board?.label}…`])
     try {
-      const result = await firmwareApi.compile(projectId, boardId, files)
+      compileAbort.current = new AbortController()
+      const result = browserMode
+        ? await compileBrowserFirmware(boardId, files, append, compileAbort.current.signal)
+        : await firmwareApi.compile(projectId, boardId, files)
       setBuild({ key, result })
       if (result.skipped.length) append(`Skipped (not part of the sketch): ${result.skipped.join(', ')}`)
       append(result.log || 'Compiled.')
@@ -189,6 +196,7 @@ export function FirmwarePanel({
       setOutcome({ ok: false, message: err instanceof Error ? err.message : 'Compilation failed' })
       return null
     } finally {
+      compileAbort.current = null
       setBusy('idle')
     }
   }
@@ -271,7 +279,7 @@ export function FirmwarePanel({
           </div>
           <div>
             <h3 className="text-sm font-semibold text-foreground">Upload to board</h3>
-            <p className="text-[10px] text-muted-foreground">Compile in the cloud, flash over USB</p>
+            <p className="text-[10px] text-muted-foreground">{browserMode ? 'Compile on this device, flash over USB' : 'Compile in the cloud, flash over USB'}</p>
           </div>
         </div>
         <Button variant="ghost" size="icon" onClick={onClose} className="h-8 w-8 rounded-full" aria-label="Close upload panel">
@@ -352,7 +360,7 @@ export function FirmwarePanel({
               title={currentBuild ? `Download ${currentBuild.download.filename}` : 'Compile first to download'}
             >
               {currentBuild ? (
-                <a href={firmwareApi.downloadUrl(currentBuild.buildId)} download={currentBuild.download.filename}>
+                <a href={currentBuild.download.url || firmwareApi.downloadUrl(currentBuild.buildId)} download={currentBuild.download.filename}>
                   <Download className="h-3.5 w-3.5" />
                 </a>
               ) : (
@@ -362,6 +370,8 @@ export function FirmwarePanel({
               )}
             </Button>
           </div>
+
+          {browserMode && busy === 'compiling' && <Button size="sm" variant="outline" onClick={() => compileAbort.current?.abort()}>Cancel compilation</Button>}
 
           {busy === 'flashing' && (
             <div className="space-y-1">

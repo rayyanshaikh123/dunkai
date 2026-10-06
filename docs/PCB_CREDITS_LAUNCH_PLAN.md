@@ -1,5 +1,7 @@
 # PCB, credits, security, and hosting launch plan
 
+> The audit and cloud cost model below are the historical baseline. The implemented website runtime now runs deterministic computation on every visitor's device and uses the existing Node API plus Atlas. Current limits, freemium pricing (five model requests; two credits per additional request), test evidence and deployment settings are in [BROWSER_COMPUTE_PLAN.md](BROWSER_COMPUTE_PLAN.md) and [LAUNCH_RUNBOOK.md](LAUNCH_RUNBOOK.md). `render.yaml` is now Node-only; the paid legacy blueprint is `render.cloud.yaml`.
+
 Status: implementation in progress, 4 October 2026. The historical findings and cost examples below remain the original planning baseline. See [the launch runbook](LAUNCH_RUNBOOK.md) for the current release gates. Billing is disabled in `render.yaml` until the external checks are complete.
 
 **Implemented in this workspace:** INR credit packs and Stripe Checkout/webhook ledger, trial grant and five free hosted chat turns, fixed server-side quotes and transactional reservations, refund/dispute reversal, settings/landing pricing, a Redis-backed AI worker with persistent job records, project/job/artifact authorization, server-side design persistence, input caps, and an isolated board evaluation path. Groq token usage is now captured from Python LangChain calls and designer calls and stored on charges for calibration. The current debit is the published fixed quote; the illustrative variable-cost formula below is not yet active.

@@ -1,5 +1,12 @@
 import mongoose from 'mongoose';
 import { env } from './env.js';
+import { BrowserInferenceRun } from '../models/BrowserInferenceRun.js';
+import { Message } from '../models/Message.js';
+import { BrowserBoard } from '../models/BrowserBoard.js';
+import { Wallet } from '../models/Wallet.js';
+import { AiCharge } from '../models/AiCharge.js';
+import { CreditEntry } from '../models/CreditEntry.js';
+import { Usage } from '../models/Usage.js';
 
 export const connectDatabase = async () => {
   mongoose.set('strictQuery', true);
@@ -13,15 +20,20 @@ export const connectDatabase = async () => {
 
   try {
     const conn = await mongoose.connect(env.mongoUri, options);
-    if (env.billingEnabled) {
+    // The unique replay index is part of the billing boundary: accepting
+    // requests before it exists could run two concurrent Groq calls for one ID.
+    if (env.browserComputeOnly) await Promise.all([BrowserInferenceRun, Message, BrowserBoard, Wallet, AiCharge, CreditEntry, Usage].map((model) => model.createIndexes()));
+    if (env.creditMeteringEnabled) {
       const hello = await conn.connection.db.admin().command({ hello: 1 });
       if (!hello.setName && hello.msg !== 'isdbgrid') {
         throw new Error('Credit billing requires a MongoDB replica set or sharded cluster for transactions');
       }
+    }
+    if (env.billingEnabled) {
       if (process.env.DUNKAI_WORKER !== 'true' && (!env.stripeSecretKey || !env.stripeWebhookSecret)) {
         throw new Error('Credit billing requires STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET');
       }
-      if (!env.aiQueueEnabled || !env.redisUrl) {
+      if (!env.browserComputeOnly && (!env.aiQueueEnabled || !env.redisUrl)) {
         throw new Error('Credit billing requires AI_QUEUE_ENABLED=true and REDIS_URL');
       }
       if (env.isProduction && process.env.DUNKAI_WORKER !== 'true' && !env.emailHost) {

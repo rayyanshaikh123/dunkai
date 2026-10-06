@@ -62,7 +62,7 @@ export function PcbView({ projectId }: { projectId?: string } = {}) {
   // Display only. The board is generated automatically when the chat pipeline
   // hands off (see chat-interface.tsx); the manual re-run lives on the BOM tab,
   // next to the components it is built from.
-  const { board, job, componentCount } = useBoardGeneration(projectId ?? activeProjectId, activeChatId)
+  const { board, job, componentCount, cancel } = useBoardGeneration(projectId ?? activeProjectId, activeChatId)
 
   const [pane, setPane] = useState<Pane>('pcb')
   const [showSample, setShowSample] = useState(false)
@@ -148,6 +148,9 @@ export function PcbView({ projectId }: { projectId?: string } = {}) {
               </div>
             ))}
           </div>
+          {process.env.NEXT_PUBLIC_BROWSER_PCB_ENABLED === 'true' && (
+            <Button variant="outline" size="sm" className="mt-4" onClick={cancel}>Cancel on this device</Button>
+          )}
         </div>
       </div>
     )
@@ -280,7 +283,7 @@ export function PcbView({ projectId }: { projectId?: string } = {}) {
       {/* Top-left meta + controls — the viewers own the rest of the surface */}
       <div className="absolute left-4 top-4 flex flex-col gap-2">
         <p className="pointer-events-none select-none font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-          Design artifact / PCB · {board.design_name ?? 'board'}
+          {board.verified === false ? 'Unverified browser preview' : 'Design artifact / PCB'} · {board.design_name ?? 'board'}
           {stats?.components ? ` · ${stats.components} parts` : ''}
           {stats?.traces ? ` · ${stats.traces} traces` : ''}
         </p>
@@ -314,7 +317,7 @@ export function PcbView({ projectId }: { projectId?: string } = {}) {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="border-border bg-background/95 backdrop-blur-xl">
               <DropdownMenuLabel className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-                Manufacturing outputs
+                {board.verified === false ? 'Preview files' : 'Manufacturing outputs'}
               </DropdownMenuLabel>
               <DropdownMenuSeparator className="bg-border" />
               {available.map(({ key, label }) => (
@@ -348,6 +351,11 @@ export function PcbView({ projectId }: { projectId?: string } = {}) {
 
         {/* A board that built WITH DRC errors is still shown — the layout is how
             you see what went wrong — but it is never shown as if it were clean. */}
+        {board.verified === false && (
+          <div className="w-fit rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-foreground">
+            Pins, footprints, electrical behavior, and fabrication have not been independently verified.
+          </div>
+        )}
         {drcErrors > 0 && (
           <div className="flex w-fit items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2">
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />

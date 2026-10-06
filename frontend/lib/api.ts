@@ -19,6 +19,7 @@ async function request<T = unknown>(path: string, options: RequestInit = {}): Pr
     url: path,
     method: options.method || 'GET',
     data: body instanceof FormData ? body : typeof body === 'string' ? JSON.parse(body) : body ?? undefined,
+    signal: options.signal ?? undefined,
   }) as Promise<T>
 }
 
@@ -171,10 +172,20 @@ export const chatApi = {
       body: JSON.stringify(data),
     }),
 
-  saveMessage: (chatId: string, type: 'user' | 'assistant', content: string, options?: string[]) =>
+  saveBrowserBoard: (chatId: string, data: {
+    sourceIr: Record<string, unknown>
+    pcbSvg: string
+    schematicSvg: string
+    circuitJson: Array<{ type: string }>
+  }) => request<import('./store').BoardArtifact>(`/chats/${chatId}/browser-board`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }),
+
+  saveMessage: (chatId: string, type: 'user' | 'assistant', content: string, options?: string[], clientMessageId?: string) =>
     request(`/chats/${chatId}/messages/save`, {
       method: 'POST',
-      body: JSON.stringify({ type, content, options }),
+      body: JSON.stringify({ type, content, options, clientMessageId }),
     }),
 
   delete: (chatId: string) =>
@@ -186,6 +197,10 @@ export const chatApi = {
 
 // ---- AI API ----
 export const aiApi = {
+  browserInference: (messages: Array<{ role: 'user' | 'assistant'; content: string }>, requestId: string, signal?: AbortSignal, purpose: 'design' | 'firmware' | 'revision' = 'design') =>
+    request<{ content: string; model: string; usage: Record<string, number> }>('/ai/browser-inference', {
+      method: 'POST', signal, body: JSON.stringify({ messages, requestId, purpose }),
+    }),
   chat: (projectId: string, message: string, agentType?: string) =>
     request('/ai/chat', {
       method: 'POST',
@@ -294,6 +309,7 @@ export const accountApi = {
 // ---- Billing ----
 export interface UsageSummary {
   billingEnabled: boolean
+  meteringEnabled: boolean
   period: string
   wallet: WalletSummary
   usage: {
@@ -318,12 +334,13 @@ export interface WalletSummary {
 
 export interface PublicPlans {
   billingEnabled: boolean
+  meteringEnabled: boolean
   currency: 'INR'
   tariffVersion: number
   freeChatsPerMonth: number
   trialCredits: number
   packs: Array<{ id: string; credits: number; amountPaise: number }>
-  rates: { chat: number; pipeline: number; board: number; byokPipeline: number; byokBoard: number }
+  rates: { chat: number; browserInference: number | null; pipeline: number | null; board: number | null; byokPipeline: number | null; byokBoard: number | null }
 }
 
 export const billingApi = {

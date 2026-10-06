@@ -21,6 +21,7 @@ const messageSchema = new mongoose.Schema(
       required: true,
     },
     content: { type: String, required: true },
+    clientMessageId: { type: String, maxlength: 120 },
     attachments: [attachmentSchema],
     artifacts: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Artifact' }],
     metadata: { type: mongoose.Schema.Types.Mixed, default: {} },
@@ -31,5 +32,6 @@ const messageSchema = new mongoose.Schema(
 );
 
 messageSchema.index({ chat: 1, createdAt: 1 });
+messageSchema.index({ chat: 1, clientMessageId: 1 }, { unique: true, partialFilterExpression: { clientMessageId: { $type: 'string' } } });
 
 export const Message = mongoose.model('Message', messageSchema);

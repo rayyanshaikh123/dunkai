@@ -1,0 +1,112 @@
+# Legacy cloud-engine blueprint. This provisions paid AI/queue/worker services.
+# Do not apply it for the all-user browser-compute target described in
+# docs/BROWSER_COMPUTE_PLAN.md. Use render.yaml for the browser runtime.
+services:
+  # ============================================================
+  # PRIVATE AI / PCB ENGINE
+  # ============================================================
+
+  - type: pserv
+    name: dunkai-engine
+    runtime: docker
+    plan: 1c-2g
+
+    dockerfilePath: ai_engine/Dockerfile
+    dockerContext: .
+
+    envVars:
+      - key: NODE_ENV
+        value: production
+
+      # Must be EXACTLY the same value as the existing Node API
+      # and the AI worker.
+      - key: SUPERVISOR_AGENT_TOKEN
+        sync: false
+
+      - key: GROQ_API_KEY
+        sync: false
+
+      - key: HF_TOKEN_READ
+        sync: false
+
+      - key: DESIGNER_PROVIDER
+        value: groq
+
+      # Keep enabled in production.
+      - key: BOARD_SANDBOX_REQUIRED
+        value: "true"
+
+    # Persistent storage for generated board data.
+    disk:
+      name: dunkai-engine-data
+      mountPath: /data
+      sizeGB: 10
+
+
+  # ============================================================
+  # REDIS JOB QUEUE
+  # ============================================================
+
+  - type: keyvalue
+    name: dunkai-jobs
+    plan: 256mb
+
+    # No public Redis access.
+    ipAllowList: []
+
+
+  # ============================================================
+  # AI BACKGROUND WORKER
+  # ============================================================
+
+  - type: worker
+    name: dunkai-ai-worker
+    runtime: docker
+    plan: 0.5c-512mb
+
+    dockerfilePath: backend/Dockerfile
+    dockerContext: backend
+
+    dockerCommand: node src/worker.js
+
+    envVars:
+      - key: NODE_ENV
+        value: production
+
+      - key: DUNKAI_WORKER
+        value: "true"
+
+      # Keep disabled until billing acceptance tests pass.
+      - key: BILLING_ENABLED
+        value: "false"
+
+      - key: AI_QUEUE_ENABLED
+        value: "true"
+
+      # Automatically injected from Redis above.
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: dunkai-jobs
+          property: connectionString
+
+      # Same Atlas database used by your existing Node API.
+      - key: MONGODB_URI
+        sync: false
+
+      # Automatically injected from private AI engine.
+      - key: SUPERVISOR_AGENT_URL
+        fromService:
+          type: pserv
+          name: dunkai-engine
+          property: hostport
+
+      # Must match existing Node API + AI engine.
+      - key: SUPERVISOR_AGENT_TOKEN
+        sync: false
+
+      # CRITICAL:
+      # Must be EXACTLY the same existing key used by your Node API.
+      # Do NOT generate a different one here.
+      - key: BYOK_ENCRYPTION_KEY
+        sync: false

@@ -19,6 +19,7 @@ const placeholderPrompts = [
   'Create a low-power wearable board...',
   'Review my power architecture...',
 ]
+const browserComputeOnly = process.env.NEXT_PUBLIC_BROWSER_COMPUTE_ONLY === 'true'
 
 function generateTitleFromPrompt(prompt: string): string {
   if (!prompt || !prompt.trim()) return 'Untitled Project'
@@ -158,14 +159,16 @@ export function NewProjectChat() {
               variant="ghost"
               size="icon"
               onClick={() => fileInputRef.current?.click()}
-              disabled={uploadingFile || busy}
+              disabled={uploadingFile || busy || browserComputeOnly}
               className="h-9 w-9 shrink-0 rounded-full text-muted-foreground hover:text-foreground"
-              title="Attach a file"
+              title={browserComputeOnly ? 'File analysis is not available in browser computation yet' : 'Attach a file'}
               aria-label="Attach a file"
             >
               {uploadingFile ? <Loader2 className="h-4 w-4 animate-spin" /> : <Paperclip className="h-4 w-4" />}
             </Button>
-            <ModelSelector value={selectedModel} onChange={setSelectedModel} disabled={busy} />
+            {browserComputeOnly
+              ? <span className="rounded-full border px-3 py-1.5 text-xs">Groq · browser pipeline</span>
+              : <ModelSelector value={selectedModel} onChange={setSelectedModel} disabled={busy} />}
             <Input
               value={input}
               onChange={(event) => setInput(event.target.value)}

@@ -70,6 +70,14 @@ const withSettlement = async (jobId, work) => {
 // GET /api/v1/ai/providers — board generators as this user can use them.
 export const providers = asyncHandler(async (req, res) => {
   const have = await configuredProviders(req.user._id);
+  if (env.browserComputeOnly) {
+    return send(res, { data: {
+      browserComputeOnly: true,
+      boardProviders: [], defaultBoardProvider: null,
+      chat: { byok: have.has('groq'), hosted: env.billingEnabled && Boolean(env.groqApiKey) },
+      engineReachable: false,
+    } });
+  }
   const caps = await getCapabilities();
   send(res, {
     data: {

@@ -5,7 +5,11 @@
 
 # next.js
 /.next/
+/public/vendor/tscircuit-eval-worker.js
+/public/vendor/avr/
 /out/
+/test-results/
+/playwright-report/
 
 # production
 /build

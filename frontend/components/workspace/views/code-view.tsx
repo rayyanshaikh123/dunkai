@@ -41,6 +41,7 @@ import { aiApi, chatApi } from '@/lib/api'
 import { ModelSelector } from '../model-selector'
 import { useWorkspaceStore, type AiOutput } from '@/lib/store'
 import { FirmwarePanel } from './firmware-panel'
+import { MicroPythonPanel } from './micropython-panel'
 
 interface CodeFile {
   filename: string
@@ -56,6 +57,7 @@ interface CodeGenData {
   files: CodeFile[]
   total_files: number
   languages_used: string[]
+  target?: string
 }
 
 const LANG_COLORS: Record<string, string> = {
@@ -421,10 +423,18 @@ export function CodeView({ projectId }: { projectId: string }) {
   const [input, setInput] = useState('')
   const [codeModel, setCodeModel] = useState(() => useWorkspaceStore.getState().selectedModel)
   const [loading, setLoading] = useState(false)
+  const revisionAbort = useRef<AbortController | null>(null)
+  useEffect(() => { setMessages([]); setLoading(false); return () => revisionAbort.current?.abort() }, [activeChatId])
 
   const handleSend = async (e?: React.FormEvent) => {
     e?.preventDefault()
     if (!input.trim() || loading || !codeGen?.files) return
+    const browserMode = process.env.NEXT_PUBLIC_BROWSER_COMPUTE_ONLY === 'true'
+    if (browserMode && !window.confirm('Revise code using your configured Groq account? This uses one model request; validation runs on this device.')) return
+    const controller = new AbortController()
+    revisionAbort.current = controller
+    const targetChat = activeChatId
+    const snapshot = JSON.stringify(codeGen.files)
     
     const userMsg = { role: 'user', content: input }
     setMessages((prev) => [...prev, userMsg])
@@ -432,7 +442,11 @@ export function CodeView({ projectId }: { projectId: string }) {
     setLoading(true)
     
     try {
-      const res = await aiApi.codeChat(projectId, codeGen.files, [...messages, userMsg], codeModel)
+      const res = browserMode
+        ? await (await import('@/lib/browser-pipeline/revise-code')).reviseBrowserCode(codeGen.files, userMsg.content, codeGen.target || codeGen.processing_unit, controller.signal)
+        : await aiApi.codeChat(projectId, codeGen.files, [...messages, userMsg], codeModel)
+      if (controller.signal.aborted || useWorkspaceStore.getState().activeChatId !== targetChat) return
+      if (JSON.stringify((useWorkspaceStore.getState().aiOutput?.code_generation as CodeGenData | null)?.files) !== snapshot) throw new Error('Files changed during the revision. Retry with the current files.')
       
       if (res.updated_files && res.updated_files.length > 0) {
         const latest = (useWorkspaceStore.getState().aiOutput?.code_generation as CodeGenData | null)?.files ?? codeGen.files
@@ -447,10 +461,9 @@ export function CodeView({ projectId }: { projectId: string }) {
       
       setMessages((prev) => [...prev, { role: 'assistant', content: res.reply }])
     } catch (err) {
-      console.error('[CodeAssistant] error:', err)
-      setMessages((prev) => [...prev, { role: 'assistant', content: 'Sorry, I encountered an error updating the code.' }])
+      if (useWorkspaceStore.getState().activeChatId === targetChat) setMessages((prev) => [...prev, { role: 'assistant', content: err instanceof Error ? err.message : 'Code revision failed' }])
     } finally {
-      setLoading(false)
+      if (revisionAbort.current === controller) { revisionAbort.current = null; setLoading(false) }
     }
   }
 
@@ -544,16 +557,16 @@ export function CodeView({ projectId }: { projectId: string }) {
             <Button variant="outline" size="sm" onClick={collapseAll} className="text-xs">
               Collapse All
             </Button>
-            <Button 
-              variant={chatOpen ? "default" : "outline"} 
-              size="sm" 
+            <Button
+              variant={chatOpen ? "default" : "outline"}
+              size="sm"
               onClick={() => setChatOpen(!chatOpen)}
               className="text-xs gap-1.5 ml-2"
             >
               <MessageSquare className="h-3.5 w-3.5" />
               Code Assistant
             </Button>
-            <Button
+            {(process.env.NEXT_PUBLIC_BROWSER_COMPUTE_ONLY !== 'true' || /ATMEGA328P/i.test(codeGen.processing_unit) || codeGen.target === 'micropython') && <Button
               variant={sidePanel === 'upload' ? 'default' : 'outline'}
               size="sm"
               onClick={() => setSidePanel(sidePanel === 'upload' ? null : 'upload')}
@@ -561,7 +574,7 @@ export function CodeView({ projectId }: { projectId: string }) {
             >
               <Usb className="h-3.5 w-3.5" />
               Upload to Board
-            </Button>
+            </Button>}
           </div>
         </div>
 
@@ -625,14 +638,14 @@ export function CodeView({ projectId }: { projectId: string }) {
       </ScrollArea>
       </div>
 
-      {sidePanel === 'upload' && (
+      {sidePanel === 'upload' && (codeGen.target === 'micropython' ? <MicroPythonPanel files={codeGen.files} onClose={() => setSidePanel(null)} /> : (
         <FirmwarePanel
           projectId={projectId}
           processingUnit={codeGen.processing_unit}
           files={codeGen.files}
           onClose={() => setSidePanel(null)}
         />
-      )}
+      ))}
 
       {/* Chat Sidebar */}
       {chatOpen && (
@@ -686,7 +699,7 @@ export function CodeView({ projectId }: { projectId: string }) {
           
           <div className="shrink-0 p-4 bg-background/50 border-t border-foreground/5">
             <form onSubmit={handleSend} className="relative flex items-center gap-2 bg-foreground/5 rounded-2xl p-1.5 focus-within:ring-2 focus-within:ring-foreground/20 transition-shadow">
-              <ModelSelector value={codeModel} onChange={setCodeModel} disabled={loading} className="shrink-0" />
+              {process.env.NEXT_PUBLIC_BROWSER_COMPUTE_ONLY !== 'true' && <ModelSelector value={codeModel} onChange={setCodeModel} disabled={loading} className="shrink-0" />}
               <input
                 type="text" 
                 value={input}
@@ -699,6 +712,7 @@ export function CodeView({ projectId }: { projectId: string }) {
                 <Send className="h-4 w-4" />
               </Button>
             </form>
+            {loading && process.env.NEXT_PUBLIC_BROWSER_COMPUTE_ONLY === 'true' && <Button variant="ghost" size="sm" onClick={() => revisionAbort.current?.abort()}>Cancel revision</Button>}
           </div>
         </div>
       )}

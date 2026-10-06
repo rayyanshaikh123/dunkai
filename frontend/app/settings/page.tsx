@@ -80,7 +80,7 @@ function UsageCard() {
   if (usage.isLoading) return <div className="h-24 animate-pulse rounded-2xl bg-secondary" />
   if (!usage.data) return <p className="text-sm text-muted-foreground">Usage is unavailable right now.</p>
 
-  const { wallet, billingEnabled, period } = usage.data
+  const { wallet, billingEnabled, meteringEnabled, period } = usage.data
   const buy = async (packId: string) => {
     setBuying(packId)
     setBuyError(null)
@@ -98,28 +98,28 @@ function UsageCard() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <span className="rounded-full bg-primary px-3 py-1 text-xs font-medium text-primary-foreground">Prepaid credits</span>
-          <span className="text-xs text-muted-foreground">Free chats for {period} (UTC)</span>
+          <span className="text-xs text-muted-foreground">Free model requests for {period} (UTC)</span>
         </div>
         <Button variant="outline" size="sm" onClick={() => queryClient.invalidateQueries({ queryKey: ['billing', 'usage'] })}>Refresh balance</Button>
       </div>
 
-      {billingEnabled ? (
+      {(meteringEnabled ?? billingEnabled) ? (
         <div className="space-y-5">
           <div className="grid gap-4 sm:grid-cols-3">
             <div className="rounded-2xl bg-secondary p-4"><p className="text-xs text-muted-foreground">Available credits</p><p className="mt-1 text-2xl font-semibold">{wallet.available}</p></div>
             <div className="rounded-2xl bg-secondary p-4"><p className="text-xs text-muted-foreground">Trial / paid</p><p className="mt-1 text-lg font-semibold">{wallet.trialAvailable} / {wallet.paidAvailable}</p></div>
-            <div className="rounded-2xl bg-secondary p-4"><p className="text-xs text-muted-foreground">Free hosted chats</p><p className="mt-1 text-lg font-semibold">{wallet.freeChatsUsed} / {wallet.freeChatsLimit} used</p></div>
+            <div className="rounded-2xl bg-secondary p-4"><p className="text-xs text-muted-foreground">Free hosted model requests</p><p className="mt-1 text-lg font-semibold">{wallet.freeChatsUsed} / {wallet.freeChatsLimit} used</p></div>
           </div>
           <p className="text-sm text-muted-foreground">{wallet.reserved} credits reserved for running jobs. Credits are ₹1 of prepaid value and do not expire.</p>
           <div className="grid gap-3 sm:grid-cols-3">
             {CREDIT_PACK_COPY.map((pack) => (
-              <Button key={pack.id} variant="outline" disabled={buying !== null || !plans.data?.packs.some((p) => p.id === pack.id && p.amountPaise === pack.rupees * 100)} onClick={() => buy(pack.id)}>
+              <Button key={pack.id} variant="outline" disabled={!billingEnabled || buying !== null || !plans.data?.packs.some((p) => p.id === pack.id && p.amountPaise === pack.rupees * 100)} onClick={() => buy(pack.id)}>
                 {buying === pack.id ? 'Opening checkout…' : `${pack.credits} credits · ₹${pack.rupees}`}
               </Button>
             ))}
           </div>
           {buyError && <p className="text-sm text-destructive">{buyError}</p>}
-          <p className="text-xs text-muted-foreground">Payment confirmation updates your balance through Stripe; returning from checkout alone does not add credits.</p>
+          <p className="text-xs text-muted-foreground">{billingEnabled ? 'Payment confirmation updates your balance through Stripe; returning from checkout alone does not add credits.' : 'Credit purchases are currently closed. Your monthly free model requests and Groq BYOK remain available.'}</p>
         </div>
       ) : (
         <p className="rounded-2xl bg-secondary px-4 py-3 text-sm text-muted-foreground">

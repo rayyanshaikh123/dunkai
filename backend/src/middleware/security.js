@@ -45,6 +45,15 @@ export const aiLimiter = rateLimit({
   },
 });
 
+export const browserInferenceLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 8,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => String(req.user._id),
+  message: { success: false, message: 'Too many model requests. Try again shortly.' },
+});
+
 // Mongo sanitize to prevent NoSQL injection
 export const sanitizeMongo = mongoSanitize;
 

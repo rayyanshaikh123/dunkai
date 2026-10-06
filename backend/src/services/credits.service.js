@@ -31,17 +31,22 @@ const entry = async (session, fields) => CreditEntry.create([fields], { session 
 /** Trial credits are granted once, only after email/Google verification. */
 export const getOrCreateWallet = async (user) => {
   await ensureWallet(user._id);
-  if (env.billingEnabled && user.isVerified) {
+  if (env.creditMeteringEnabled && user.isVerified) {
     await mongoose.connection.transaction(async (session) => {
       const wallet = await Wallet.findOne({ user: user._id }).session(session);
       if (wallet.trialGranted) return;
       wallet.trialGranted = true;
-      wallet.trialAvailable += TRIAL_CREDITS;
+      // Browser mode's free offer is five hosted model turns per month.
+      // The legacy 150-credit project trial would silently add 75 more turns.
+      const grant = env.browserComputeOnly ? 0 : TRIAL_CREDITS;
+      wallet.trialAvailable += grant;
       await wallet.save({ session });
-      await entry(session, {
-        user: user._id, kind: 'trial_grant', availableTrialDelta: TRIAL_CREDITS,
-        idempotencyKey: `trial:${user._id}`,
-      });
+      if (grant) {
+        await entry(session, {
+          user: user._id, kind: 'trial_grant', availableTrialDelta: grant,
+          idempotencyKey: `trial:${user._id}`,
+        });
+      }
     });
   }
   return Wallet.findOne({ user: user._id }).lean();
@@ -66,7 +71,7 @@ export const walletSummary = async (user) => {
 
 /** Reserve the published maximum before allowing any hosted or BYOK work. */
 export const reserveCharge = async (user, jobId, { action, byok = false }) => {
-  if (!env.billingEnabled) return null;
+  if (!env.creditMeteringEnabled) return null;
   const { credits, kind } = creditQuote({ action, byok });
   const period = currentCreditPeriod();
   await getOrCreateWallet(user);
@@ -120,7 +125,7 @@ export const reserveCharge = async (user, jobId, { action, byok = false }) => {
 
 /** Idempotent completion/release. A failed run currently releases the full quote. */
 export const settleCharge = async (jobId, result) => {
-  if (!env.billingEnabled || !jobId) return;
+  if (!env.creditMeteringEnabled || !jobId) return;
   await mongoose.connection.transaction(async (session) => {
     const charge = await AiCharge.findOne({ jobId }).session(session);
     if (!charge || charge.status !== 'reserved') return;
