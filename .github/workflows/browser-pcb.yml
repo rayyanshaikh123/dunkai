@@ -20,6 +20,8 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm run test:credits
+      - run: npm run test:credit-config
+      - run: npm run test:database-dns
       - run: npm run test:browser-compute
       - run: npm run test:browser-free
   browsers:

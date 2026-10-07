@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test'
 import { readFileSync } from 'node:fs'
+import { installCatalogueFixtures } from './catalogue-fixtures'
+test.beforeEach(async({page})=>installCatalogueFixtures(page))
 
 const design = {
   project_name: 'Passive test', summary: 'Two resistors for a routing preview',
@@ -11,6 +13,7 @@ const design = {
   ],
   nets: [{ name: 'SIGNAL', connections: ['R1.2', 'R2.1'] }], unsupported_reasons: [],
 }
+const livePassive = JSON.parse(readFileSync('tests/fixtures/live-passive-design.json','utf8'))
 
 test('executes agent stages in a local worker with only a bounded model relay', async ({ page }) => {
   let inferenceCalls = 0
@@ -37,6 +40,19 @@ test('executes agent stages in a local worker with only a bounded model relay', 
   await expect(page.getByLabel('Agent result')).toContainText('2.0-browser')
   expect(inferenceCalls).toBe(1)
   expect(aiRequests).toEqual(['/api/v1/ai/browser-inference'])
+})
+
+test('accepts the recorded live provider wire format without another model call', async ({page}) => {
+  await page.route('**/api/v1/ai/browser-inference',(route)=>route.fulfill({json:{data:{content:JSON.stringify(livePassive),model:'test',usage:{}}}}))
+  await page.goto('/labs/browser-compute')
+  await expect(page.getByRole('button',{name:'Run browser agents'})).toBeEnabled()
+  page.once('dialog',(dialog)=>void dialog.accept())
+  await page.getByRole('button',{name:'Run browser agents'}).click()
+  await expect(page.getByRole('status',{name:'Agent status'})).toHaveText('Agents finished on this device')
+  const result=JSON.parse(await page.getByLabel('Agent result').innerText())
+  expect(result.errors).toEqual([])
+  expect(result.pcb_ir.components).toHaveLength(2)
+  expect(result.pcb_ir.nets[0].connections).toEqual(['R1.2','R2.1'])
 })
 
 test('cancels local agents while inference is waiting and ignores a late answer', async ({ page }) => {
@@ -68,7 +84,9 @@ test('resolves an actual multi-pin part, maps schema 2.0 roles, and generates fi
     calls += 1
     const output = calls === 1 ? { ...design,
       parts: [{ref_id:'U1',part_class:'processing',part_number:'ATMEGA328P-AU',package:'TQFP-32',lcsc:'C14877'},design.parts[0]],
-      nets: [{name:'IO',interface:'GPIO',members:[{ref_id:'U1',role:'GPIO'},{ref_id:'R1',role:'SIGNAL',pin:'1'}]}],
+      // Groq sometimes puts the protocol in role and leaves interface null.
+      // Use its complete wire format, including the inactive empty array.
+      nets: [{name:'IO',interface:null,net_class:null,connections:[],members:[{ref_id:'U1',role:'GPIO GPIO',pin:null},{ref_id:'R1',role:'SIGNAL',pin:'1'}]}],
     } : { files: [{filename:'main.ino',code:'void setup(){pinMode(3,OUTPUT);}\nvoid loop(){digitalWrite(3,LOW);}',description:'Safe GPIO starter'}] }
     await route.fulfill({ json: { data: { content: JSON.stringify(output), model:'test', usage:{} } } })
   })
@@ -78,6 +96,9 @@ test('resolves an actual multi-pin part, maps schema 2.0 roles, and generates fi
   await expect(page.getByRole('status', { name:'Agent status' })).toHaveText('Agents finished on this device')
   const result = JSON.parse(await page.getByLabel('Agent result').innerText())
   expect(result.errors).toEqual([])
+  expect(result.pcb_ir.nets[0].interface).toBe('GPIO')
+  expect(result.pcb_ir.nets[0].members[0].role).toBe('GPIO')
+  expect(result.pcb_ir.nets[0].connections).toBeUndefined()
   expect(result.pcb_ir.components[0].resolved.pads).toHaveLength(32)
   expect(result.code_generation.files[0].filename).toBe('main.ino')
   expect(calls).toBe(2)
@@ -118,4 +139,68 @@ test('resumes after a refresh using the saved design answer without another mode
   expect(result.errors).toEqual([])
   expect(result.pcb_ir.components).toHaveLength(2)
   expect(calls).toBe(1)
+})
+
+test('resumes a rejected JSON run with a fresh request ID after confirmation', async ({page}) => {
+  const ids: string[] = []
+  await page.route('**/api/v1/ai/browser-inference', async (route) => {
+    ids.push(route.request().postDataJSON().requestId)
+    if (ids.length === 1) {
+      await route.fulfill({status:422,json:{success:false,message:'Groq could not produce valid design or code JSON. Try a smaller or more focused request.'}})
+    } else {
+      await route.fulfill({json:{data:{content:JSON.stringify(design),model:'test',usage:{}}}})
+    }
+  })
+  await page.goto('/labs/browser-compute')
+  await expect(page.getByRole('button',{name:'Run browser agents'})).toBeEnabled()
+  page.once('dialog',(dialog)=>void dialog.accept())
+  await page.getByRole('button',{name:'Run browser agents'}).click()
+  await expect(page.getByRole('status',{name:'Agent status'})).toContainText('could not produce valid')
+  await page.reload()
+  await expect(page.getByRole('button',{name:'Resume browser agents'})).toBeVisible()
+  page.once('dialog',(dialog)=>void dialog.accept())
+  await page.getByRole('button',{name:'Resume browser agents'}).click()
+  await expect(page.getByRole('status',{name:'Agent status'})).toHaveText('Agents finished on this device')
+  expect(ids).toHaveLength(2)
+  expect(ids[1]).not.toBe(ids[0])
+})
+
+test('resumes an interview stopped at four questions using its saved answer without another model call', async ({page}) => {
+  let calls=0
+  const answer={status:'question',question:'Does the LED need a physical brightness control?',options:['Fixed brightness','Adjustment knob','Buttons'],requirements:null}
+  await page.route('**/api/v1/ai/browser-inference',async(route)=>{
+    calls+=1
+    await route.fulfill({json:{data:{content:JSON.stringify(answer),model:'test',usage:{}}}})
+  })
+  await page.goto('/labs/browser-compute')
+  await expect(page.getByRole('button',{name:'Run browser agents'})).toBeEnabled()
+  await page.evaluate(async(answer)=>{
+    const db=await new Promise<IDBDatabase>((resolve,reject)=>{
+      const request=indexedDB.open('dunkai-browser-runtime',1)
+      request.onupgradeneeded=()=>request.result.createObjectStore('entries',{keyPath:'key'})
+      request.onsuccess=()=>resolve(request.result)
+      request.onerror=()=>reject(request.error)
+    })
+    const checkpoint={version:1,id:crypto.randomUUID(),input:{request:'USB 5V',history:[],interview:{turn:4},existing:{requirements:{design_interview:{version:2,request:'Blink an LED',turn:4,status:'question'}}}},calls:{
+      design:{requestId:crypto.randomUUID()},firmware:{requestId:crypto.randomUUID()},
+      interview:{requestId:crypto.randomUUID(),prompt:'Previous policy: finish after four questions.',content:JSON.stringify(answer)},
+    }}
+    await new Promise<void>((resolve,reject)=>{
+      const tx=db.transaction('entries','readwrite')
+      tx.objectStore('entries').put({key:'run:browser-compute-lab',value:checkpoint,expiresAt:Date.now()+60*60*1000})
+      tx.oncomplete=()=>resolve()
+      tx.onerror=()=>reject(tx.error)
+    })
+    db.close()
+  },answer)
+  await page.reload()
+  await expect(page.getByRole('button',{name:'Resume browser agents'})).toBeVisible()
+  page.once('dialog',(dialog)=>void dialog.accept())
+  await page.getByRole('button',{name:'Resume browser agents'}).click()
+  await expect(page.getByRole('status',{name:'Agent status'})).toHaveText('Agents finished on this device')
+  const result=JSON.parse(await page.getByLabel('Agent result').innerText())
+  expect(result.interview_status).toBe('question')
+  expect(result.interview_question).toBe(answer.question)
+  expect(result.interview_options).toEqual(answer.options)
+  expect(calls).toBe(0)
 })

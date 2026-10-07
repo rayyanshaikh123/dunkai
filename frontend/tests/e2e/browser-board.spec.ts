@@ -30,3 +30,21 @@ test('routes a vetted eight-pin timer in the browser', async ({ page }) => {
   await expect(page.getByText('1 routed trace')).toBeVisible()
   await expect(page.getByAltText('Test PCB layout')).toBeVisible()
 })
+
+test('cancels a blocked evaluator and can start a fresh board immediately', async ({page}) => {
+  let release:()=>void=()=>{}
+  const ready=new Promise<void>((resolve)=>{release=resolve})
+  await page.route('**/vendor/tscircuit-eval-worker.js',async(route)=>{await ready;await route.continue().catch(()=>{})})
+  await page.goto('/labs/browser-compute')
+  await expect(page.locator('label[data-ready]')).toHaveAttribute('data-ready','true')
+  page.once('dialog',(dialog)=>void dialog.accept())
+  const requested=page.waitForRequest('**/vendor/tscircuit-eval-worker.js')
+  await page.getByRole('button',{name:'Generate on this device'}).click()
+  await requested
+  await page.getByRole('button',{name:'Cancel',exact:true}).click()
+  await expect(page.getByRole('status',{name:'Board status'})).toHaveText('Run cancelled')
+  release()
+  page.once('dialog',(dialog)=>void dialog.accept())
+  await page.getByRole('button',{name:'Generate on this device'}).click()
+  await expect(page.getByRole('status',{name:'Board status'})).toContainText('Finished locally')
+})

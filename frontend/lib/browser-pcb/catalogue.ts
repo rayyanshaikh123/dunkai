@@ -1,23 +1,10 @@
 import { EasyEdaJsonSchema, convertEasyEdaJsonToCircuitJson } from 'easyeda/browser'
 import { validateResolvedPart, type ResolvedPart } from './catalogue-types.ts'
 import { readLocal, writeLocal } from '../browser-pipeline/local-storage.ts'
+import { fetchCatalogueJson, lookupCatalogueOffer, type CatalogueOffer } from './catalogue-offers.ts'
 
-const ROOT = 'https://jlcsearch.tscircuit.com'
 const key = (text: string) => text.toUpperCase().replace(/[^A-Z0-9]/g, '')
 const record = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value)
-async function fetchJson(path: string): Promise<unknown> {
-  let failure: unknown
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      const response = await fetch(`${ROOT}${path}`, { signal: AbortSignal.timeout(12_000), credentials: 'omit' })
-      if (!response.ok) throw new Error(`Catalogue returned HTTP ${response.status}`)
-      const text = await response.text()
-      if (text.length > 2_000_000) throw new Error('Catalogue response is too large')
-      return JSON.parse(text)
-    } catch (error) { failure = error }
-  }
-  throw new Error(`Component catalogue unavailable: ${failure instanceof Error ? failure.message : 'network error'}`)
-}
 
 /** Converts catalogue geometry into data. No imported TSX or model source is executed. */
 export function resolveEasyEda(raw: unknown, expectedMpn: string, expectedPackage: string, expectedLcsc: string): ResolvedPart {
@@ -62,22 +49,24 @@ export function resolveEasyEda(raw: unknown, expectedMpn: string, expectedPackag
     pinLabels, pads, width: bounds.width, height: bounds.height })
 }
 
-export async function resolveCataloguePart(mpn: string, pkg: string, lcsc?: string): Promise<ResolvedPart> {
-  const cacheKey = `part:${key(mpn)}:${key(pkg)}:${lcsc || ''}`
-  const cached = await readLocal<ResolvedPart>(cacheKey).catch(() => null)
-  if (cached) return validateResolvedPart(cached)
-  let identifier = lcsc
-  if (!identifier) {
-    const response = await fetchJson(`/api/search?${new URLSearchParams({ q: mpn, limit: '100' })}`)
-    const rows = record(response) && Array.isArray(response.components) ? response.components.filter(record) : []
-    const candidates = rows.filter((row) => typeof row.mfr === 'string' && key(row.mfr) === key(mpn) &&
-      typeof row.package === 'string' && (!pkg || key(row.package).startsWith(key(pkg))))
-    if (!candidates.length) throw new Error(`${mpn}: no exact manufacturer/package match in the catalogue`)
-    candidates.sort((a, b) => Number(b.stock || 0) - Number(a.stock || 0))
-    identifier = `C${candidates[0].lcsc}`
+export async function resolveCataloguePart(mpn: string, pkg: string, lcsc?: string, listing?: CatalogueOffer): Promise<ResolvedPart> {
+  // C14877 is a supplier identifier, not a manufacturer number. Resolve its
+  // verified listing before checking symbol identity.
+  if (/^C[1-9][0-9]{0,9}$/i.test(mpn)) {
+    listing ||= await lookupCatalogueOffer(mpn, pkg, lcsc)
+    mpn = listing.partNumber; lcsc = listing.lcsc
   }
+  const cacheKey = `part:v2:${key(mpn)}:${lcsc || listing?.lcsc || ''}`
+  const cached = await readLocal<ResolvedPart>(cacheKey).catch(() => null)
+  if (cached) {
+    const validated=validateResolvedPart(cached)
+    if(key(validated.partNumber)!==key(mpn)||lcsc&&validated.lcsc!==lcsc)throw new Error('Cached catalogue identity does not match the selected component')
+    if(pkg&&key(pkg)!=='CUSTOM'&&!key(validated.package).startsWith(key(pkg)))throw new Error(`${mpn}: catalogue package differs from ${pkg}`)
+    return validated
+  }
+  const identifier = lcsc || (listing || await lookupCatalogueOffer(mpn, pkg)).lcsc
   if (!/^C[1-9][0-9]{0,9}$/.test(identifier)) throw new Error('Invalid catalogue part identifier')
-  const response = await fetchJson(`/api/easyeda_components/${identifier}`)
+  const response = await fetchCatalogueJson(`/api/easyeda_components/${identifier}`)
   const details = record(response) && record(response.easyeda_component_details) ? response.easyeda_component_details : null
   if (!details?.easyeda_json) throw new Error(`${mpn}: symbol and footprint are unavailable`)
   const resolved = resolveEasyEda(details.easyeda_json, mpn, pkg, identifier)

@@ -203,12 +203,24 @@ export const updateArtifacts = async (id, data, user) => {
     if (JSON.stringify(data).length > 200_000) throw ApiError.badRequest('Browser design artifacts are too large');
   }
   const chat = await getOwnedChat(id, user);
+  // Component corrections invalidate previews and compiled firmware for the
+  // old pin mapping. Only the server may clear the saved board assertion.
+  const changedIr = env.browserComputeOnly && data.pcb_ir !== undefined && JSON.stringify(chat.pcb_ir) !== JSON.stringify(data.pcb_ir);
   for (const key of ARTIFACT_KEYS) {
     if (data[key] === undefined) continue;
     chat[key] = data[key];
     chat.markModified(key);
   }
-  await chat.save();
+  if (changedIr) {
+    chat.board = {}; chat.markModified('board');
+    if (data.code_generation === undefined) { chat.code_generation = {}; chat.markModified('code_generation'); }
+  }
+  if(changedIr){
+    await Chat.db.transaction(async(session)=>{
+      await chat.save({session});
+      await BrowserBoard.deleteMany({chat:chat._id,user:user._id}).session(session);
+    });
+  }else await chat.save();
   return chat;
 };
 

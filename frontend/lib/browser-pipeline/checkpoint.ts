@@ -5,7 +5,7 @@ export type BrowserCheckpoint = {
   version: 1
   id: string
   input: BrowserPipelineInput
-  calls: Record<'design' | 'firmware', { requestId: string; prompt?: string; content?: string }>
+  calls: Record<'design' | 'firmware', { requestId: string; prompt?: string; content?: string }> & {interview?: {requestId:string;prompt?:string;content?:string}}
   result?: BrowserPipelineResult
 }
 export const readCheckpoint = (key: string) => readLocal<BrowserCheckpoint>(`run:${key}`)

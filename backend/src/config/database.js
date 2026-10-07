@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import { env } from './env.js';
+import { connectWithMongoDnsFallback } from './mongoDns.js';
 import { BrowserInferenceRun } from '../models/BrowserInferenceRun.js';
 import { Message } from '../models/Message.js';
 import { BrowserBoard } from '../models/BrowserBoard.js';
@@ -19,7 +20,10 @@ export const connectDatabase = async () => {
   };
 
   try {
-    const conn = await mongoose.connect(env.mongoUri, options);
+    const conn = await connectWithMongoDnsFallback(env.mongoUri, options, {
+      connect: (uri, connectionOptions) => mongoose.connect(uri, connectionOptions),
+      enabled: env.mongoDnsFallback,
+    });
     // The unique replay index is part of the billing boundary: accepting
     // requests before it exists could run two concurrent Groq calls for one ID.
     if (env.browserComputeOnly) await Promise.all([BrowserInferenceRun, Message, BrowserBoard, Wallet, AiCharge, CreditEntry, Usage].map((model) => model.createIndexes()));

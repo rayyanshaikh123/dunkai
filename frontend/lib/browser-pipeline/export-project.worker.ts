@@ -11,7 +11,7 @@ self.onmessage = (event) => {
     if (output.pcb_ir) archive['pcb-ir.json'] = strToU8(JSON.stringify(output.pcb_ir, null, 2))
     const cell = (value: unknown) => { const text = String(value ?? ''); return `"${(/^[=+@\-\t\r]/.test(text) ? "'" : '') + text.replace(/"/g, '""')}"` }
     const rows = Array.isArray(output.bom?.rows) ? output.bom.rows : []
-    const columns = ['reference','component','manufacturer','mfr_part','package','lcsc','build_quantity','status']
+    const columns = ['reference','component','manufacturer','mfr_part','package','lcsc','build_quantity','unit_price_usd','extended_price_usd','stock','price_checked_at','source_url','price_basis','status','status_reason']
     archive['bom.csv'] = strToU8([columns.map(cell).join(','), ...rows.map((row: Record<string, unknown>) => columns.map((column)=>cell(row[column])).join(','))].join('\r\n'))
     const sources = Array.isArray(output.code_generation?.files) ? output.code_generation.files : []
     if (sources.length > 16) throw new Error('Too many firmware files')

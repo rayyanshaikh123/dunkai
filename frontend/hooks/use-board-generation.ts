@@ -53,7 +53,9 @@ export function useBoardGeneration(projectId: string | null, chatId: string | nu
     ? ((pcbIr as { components: unknown[] }).components as unknown[]).length
     : 0
 
-  const canGenerate = Boolean(projectId) && componentCount > 0 && boardJob.status !== 'running'
+  const handoff = aiOutput?.handoff_validation
+  const blocked = browserBoardEnabled && handoff?.well_formed === false
+  const canGenerate = Boolean(projectId) && componentCount > 0 && !blocked && boardJob.status !== 'running'
 
   const generate = useCallback(async (options?: { alreadyConfirmed?: boolean; chatId?: string | null }) => {
     if (!projectId) return
@@ -62,6 +64,10 @@ export function useBoardGeneration(projectId: string | null, chatId: string | nu
     // note on closures in this hook's doc comment.
     const liveIr = (useWorkspaceStore.getState().aiOutput?.pcb_ir ?? null) as Record<string, unknown> | null
     if (!liveIr) return
+    if(browserBoardEnabled && useWorkspaceStore.getState().aiOutput?.handoff_validation?.well_formed===false){
+      failBoardJob('Resolve the component and pin findings in the BOM before generating this board.')
+      return
+    }
 
     cleanupRef.current?.()
 

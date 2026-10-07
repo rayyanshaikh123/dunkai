@@ -49,7 +49,7 @@ export const cancelValidation = [
 ];
 
 export const browserInferenceValidation = [
-  body('purpose').optional().isIn(['design', 'firmware', 'revision']),
+  body('purpose').optional().isIn(['design', 'firmware', 'revision','interview']),
   body('requestId').isUUID().withMessage('A request ID is required'),
   body('messages').isArray({ min: 1, max: 12 }),
   body('messages.*.role').isIn(['user', 'assistant']),

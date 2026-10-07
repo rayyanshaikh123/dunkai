@@ -7,7 +7,7 @@ import { resolveCredentials } from '../services/apiKey.service.js';
 import { reserveCharge, settleCharge } from '../services/credits.service.js';
 import { BrowserInferenceRun } from '../models/BrowserInferenceRun.js';
 import { AiCharge } from '../models/AiCharge.js';
-import { browserResponseFormat } from '../config/browserSchemas.js';
+import { requestBrowserCompletion } from '../services/browserInference.service.js';
 
 /** A bounded inference relay. The browser owns every workflow stage and all
  * deterministic design computation. The backend owns keys, quotas and usage.
@@ -59,36 +59,12 @@ export const browserInference = asyncHandler(async (req, res) => {
     if (!key) throw new ApiError(503, 'Groq inference is not configured');
     await reserveCharge(req.user, jobId, { action: 'browser_inference', byok });
 
-    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
-      body: JSON.stringify({
-        model: env.groqBrowserModel,
-        messages,
-        temperature: 0.2,
-        max_completion_tokens: 4096,
-        response_format: browserResponseFormat(env.groqBrowserModel, purpose),
-        ...(env.groqBrowserModel.startsWith('openai/gpt-oss-') ? { reasoning_effort: 'low', include_reasoning: false } : {}),
-      }),
-      signal: AbortSignal.timeout(60_000),
-    });
-    if (!response.ok) {
-      if (response.status === 429) throw ApiError.tooMany('Groq is rate limited. Try again shortly.');
-      if (response.status === 401 || response.status === 403) {
-        throw new ApiError(502, byok ? 'Your Groq key was rejected. Update it in Settings.' : 'Groq authentication failed.');
-      }
-      throw ApiError.badGateway(`Groq returned HTTP ${response.status}`);
-    }
+    result = await requestBrowserCompletion({ key, model: env.groqBrowserModel, messages, purpose, byok });
     providerSucceeded = true;
-    try {
-      result = await response.json();
-    } catch {
-      throw ApiError.badGateway('Groq returned malformed JSON');
-    }
   } catch (error) {
     // A successful HTTP response can represent a billed provider call even
     // when its body cannot be decoded. Never turn that into a free retry.
-    await settleCharge(jobId, providerSucceeded ? {} : null);
+    await settleCharge(jobId, providerSucceeded || error.providerSucceeded ? {} : null);
     await BrowserInferenceRun.updateOne({ _id: run._id }, { $set: { status: 'failed' } });
     throw error;
   }

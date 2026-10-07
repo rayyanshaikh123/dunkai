@@ -12,6 +12,7 @@ export async function runBrowserPipeline(
   signal?: AbortSignal,
   existing?: AiOutput | null,
   recovery?: { key: string; resume?: boolean },
+  interview?: {turn:number},
 ): Promise<BrowserPipelineResult> {
   if (signal?.aborted) return Promise.reject(new Error('Run cancelled'))
   if (typeof Worker === 'undefined') return Promise.reject(new Error('This browser does not support local agent workers'))
@@ -19,11 +20,11 @@ export async function runBrowserPipeline(
   const checkpoint: BrowserCheckpoint = recovery?.resume
     ? await readCheckpoint(recovery.key) || (() => { throw new Error('This device has no saved run to resume') })()
     : { version: 1, id: crypto.randomUUID(), input: {
-      request, history: history.slice(-5), existing: existing ? { requirements: existing.requirements, architecture: existing.architecture, bom: existing.bom, pcb_ir: existing.pcb_ir } : null,
+      request, history: interview ? history : history.slice(-5), existing: existing ? { requirements: existing.requirements, architecture: existing.architecture, bom: existing.bom, pcb_ir: existing.pcb_ir } : null, ...(interview?{interview}:{}),
     }, calls: { design: { requestId: crypto.randomUUID() }, firmware: { requestId: crypto.randomUUID() } } }
   if (recovery) await saveCheckpoint(recovery.key, checkpoint)
   if (signal?.aborted) throw new Error('Run cancelled')
-  if (checkpoint.result) {
+  if (checkpoint.result && !checkpoint.input.interview) {
     for (const stage of ['requirements', 'architecture', 'component', 'pcb', 'validation', 'documentation']) onProgress(stage)
     return checkpoint.result
   }
@@ -65,11 +66,19 @@ export async function runBrowserPipeline(
         else if (message.type === 'inference') {
           // At most one design call and one applicable firmware call; the worker cannot choose a key,
           // model, destination, or arbitrary HTTP request.
-          if (!['design', 'firmware'].includes(message.stage) || inferenceRequested.has(message.stage) || typeof message.prompt !== 'string' || message.prompt.length > 6000) {
+          if (!['design', 'firmware','interview'].includes(message.stage) || inferenceRequested.has(message.stage) || typeof message.prompt !== 'string' || message.prompt.length > 6000) {
             throw new Error('The browser agent requested unsupported model usage')
           }
           inferenceRequested.add(message.stage)
-          const saved = checkpoint.calls[message.stage]
+          if(message.stage==='interview'&&!checkpoint.calls.interview)checkpoint.calls.interview={requestId:crypto.randomUUID()}
+          const saved = checkpoint.calls[message.stage]!
+          // Replay an interview answer against its saved input even when the
+          // question policy changes. The worker still validates the answer;
+          // interviews stopped at the old limit can resume without a new call.
+          if (message.stage === 'interview' && saved.content) {
+            post({ type: 'inference-result', content: saved.content })
+            return
+          }
           if (saved.prompt && saved.prompt !== message.prompt) throw new Error('Saved model context changed. Start a new run after reviewing the design.')
           saved.prompt = message.prompt
           if (recovery) await saveCheckpoint(recovery.key, checkpoint)
@@ -86,7 +95,7 @@ export async function runBrowserPipeline(
               // completed design answer but give only this failed stage a new
               // ID on the next confirmed resume. Network interruption and a
               // pending duplicate keep the ID so server replay remains safe.
-              if (error instanceof ApiError && ([400,402,429,502,503].includes(error.statusCode) || error.statusCode === 409 && /failed|already used/i.test(error.message))) {
+              if (error instanceof ApiError && ([400,402,422,429,502,503].includes(error.statusCode) || error.statusCode === 409 && /failed|already used/i.test(error.message))) {
                 saved.requestId = crypto.randomUUID()
                 if (recovery) await saveCheckpoint(recovery.key, checkpoint)
               }

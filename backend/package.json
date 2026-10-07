@@ -8,9 +8,11 @@
     "start": "node src/server.js",
     "start:worker": "node src/worker.js",
     "check": "node --check src/server.js && node --check src/app.js",
-    "test:credits": "BROWSER_COMPUTE_ONLY=false BILLING_ENABLED=true STRIPE_SECRET_KEY=sk_test_dummy STRIPE_WEBHOOK_SECRET=whsec_dummy node --test test/credits.test.js",
-    "test:browser-compute": "BROWSER_COMPUTE_ONLY=true BILLING_ENABLED=true GROQ_API_KEY=gsk_hosted_test node --test test/browser-compute.test.js",
-    "test:browser-free": "BROWSER_COMPUTE_ONLY=true BILLING_ENABLED=false GROQ_API_KEY=gsk_hosted_test node --test test/browser-compute.test.js",
+    "test:credit-config": "node --test test/credit-testing-config.test.js",
+    "test:database-dns": "node --test test/mongo-dns.test.js",
+    "test:credits": "DISABLE_CREDITS_FOR_TESTING=false BROWSER_COMPUTE_ONLY=false BILLING_ENABLED=true STRIPE_SECRET_KEY=sk_test_dummy STRIPE_WEBHOOK_SECRET=whsec_dummy node --test test/credits.test.js",
+    "test:browser-compute": "DISABLE_CREDITS_FOR_TESTING=false BROWSER_COMPUTE_ONLY=true BILLING_ENABLED=true GROQ_API_KEY=gsk_hosted_test node --test test/browser-compute.test.js",
+    "test:browser-free": "DISABLE_CREDITS_FOR_TESTING=false BROWSER_COMPUTE_ONLY=true BILLING_ENABLED=false GROQ_API_KEY=gsk_hosted_test node --test test/browser-compute.test.js",
     "lint": "eslint src/"
   },
   "dependencies": {

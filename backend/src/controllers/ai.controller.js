@@ -74,7 +74,7 @@ export const providers = asyncHandler(async (req, res) => {
     return send(res, { data: {
       browserComputeOnly: true,
       boardProviders: [], defaultBoardProvider: null,
-      chat: { byok: have.has('groq'), hosted: env.billingEnabled && Boolean(env.groqApiKey) },
+      chat: { byok: have.has('groq'), hosted: Boolean(env.groqApiKey) },
       engineReachable: false,
     } });
   }

@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test'
 import { readFile } from 'node:fs/promises'
 import { readFileSync } from 'node:fs'
 import { unzipSync, strFromU8 } from 'fflate'
+import { installCatalogueFixtures } from './catalogue-fixtures'
 
 for (const mcu of [false,true]) test(`saves a signed-in ${mcu ? 'MCU firmware' : 'passive'} project, builds locally, and reloads private artifacts`, async ({ page }, testInfo) => {
   test.skip(process.env.NEXT_PUBLIC_BROWSER_COMPUTE_ONLY !== 'true', 'Workspace integration requires the browser-mode frontend build')
@@ -9,10 +10,12 @@ for (const mcu of [false,true]) test(`saves a signed-in ${mcu ? 'MCU firmware' :
   const project = { _id: '507f1f77bcf86cd799439012', owner: user._id, title: 'Browser project', status: 'active', tags: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
   const chat: Record<string, any> = { _id: '507f1f77bcf86cd799439013', project: project._id, user: user._id, title: 'Project chat', createdAt: new Date().toISOString() }
   const messages: Record<string, any>[] = []
+  await installCatalogueFixtures(page)
+  let interviewCalls=0
   let inferenceCalls = 0, boardSaves = 0
   const forbidden: string[] = [], unexpected: string[] = []
   const design = { project_name:'Saved resistor project', summary:'Two resistors connected for a routing preview',requirements:['Connect two resistors'],nodes:[{id:'resistors',label:'Resistor network',category:'passive'}],edges:[],parts:[{ref_id:'R1',part_class:'resistor',value:'1k',package:'0603'},{ref_id:'R2',part_class:'resistor',value:'1k',package:'0603'}],nets:[{name:'SIGNAL',connections:['R1.2','R2.1']}],unsupported_reasons:[] }
-  const plan = mcu ? {...design,parts:[{ref_id:'U1',part_class:'processing',part_number:'ATMEGA328P-AU',package:'TQFP-32',lcsc:'C14877'},design.parts[0]],nets:[{name:'IO',interface:'GPIO',members:[{ref_id:'U1',role:'GPIO'},{ref_id:'R1',role:'SIGNAL',pin:'1'}]}]} : design
+  const plan = mcu ? {...design,parts:[{ref_id:'U1',part_class:'processing',part_number:'C14877',package:'TQFP-32'},design.parts[0]],nets:[{name:'IO',interface:'GPIO',members:[{ref_id:'U1',role:'GPIO'},{ref_id:'R1',role:'SIGNAL',pin:'1'}]}]} : design
   if (mcu) await page.route('https://jlcsearch.tscircuit.com/api/easyeda_components/C14877',(route)=>route.fulfill({body:readFileSync('tests/fixtures/atmega328p-easyeda.json','utf8'),contentType:'application/json',headers:{'access-control-allow-origin':'*'}}))
   await page.route('**/api/v1/**', async (route) => {
     const request = route.request(), path = new URL(request.url()).pathname.replace('/api/v1','')
@@ -30,6 +33,12 @@ for (const mcu of [false,true]) test(`saves a signed-in ${mcu ? 'MCU firmware' :
     else if (path === `/chats/${chat._id}/messages/save`) { messages.push(body); data={_id:String(messages.length),...body} }
     else if (path === `/chats/${chat._id}/artifacts`) { Object.assign(chat,body); data=chat }
     else if (path === '/ai/browser-inference') {
+      if(body.purpose==='interview'){
+        interviewCalls+=1
+        const requirements={project_name:'Browser project',category:'Passive circuit',objective:'Connect two resistors',functional_requirements:['Connect two resistors'],hardware_inputs:null,hardware_outputs:null,target_users:null,connectivity:null,supported_platforms:null,power_requirements:'No power required',physical_constraints:null,performance_requirements:null,safety_compliance:null,budget:'Flexible'}
+        data={content:JSON.stringify(interviewCalls===1?{status:'question',question:'What power source should this design use?',options:['USB 5 V','Battery','No power required'],requirements:null}:{status:'complete',question:null,options:[],requirements}),model:'test',usage:{}}
+        await route.fulfill({json:{data}});return
+      }
       inferenceCalls+=1
       const revision = body.messages[0].content.startsWith('Review this firmware')
       const files=[{filename:'main.ino',code:`void setup(){pinMode(3,OUTPUT);}\nvoid loop(){digitalWrite(3,LOW);delay(${revision?100:1000});}`,description:'GPIO starter'}]
@@ -57,12 +66,33 @@ for (const mcu of [false,true]) test(`saves a signed-in ${mcu ? 'MCU firmware' :
   await composer.fill('Connect two 1k resistors')
   page.once('dialog',(dialog)=>void dialog.accept())
   await composer.press('Enter')
+  await expect(page.getByText('What power source should this design use?',{exact:true})).toBeVisible()
+  expect(inferenceCalls).toBe(0)
+  // The interview and its choices survive a reload before the reply.
+  await page.reload()
+  await expect(page.getByText('What power source should this design use?',{exact:true})).toBeVisible()
+  const interviewComposer=page.locator('input').filter({visible:true}).first()
+  await interviewComposer.fill('No power required; custom PCB; one unit; flexible budget')
+  await interviewComposer.press('Enter')
   await expect.poll(()=>boardSaves).toBe(1)
   await page.getByRole('main').getByRole('button',{name:'PCB',exact:true}).click()
   await expect(page.getByText('Unverified browser preview')).toBeVisible()
   expect(messages.some((message)=>message.type==='user'&&message.clientMessageId)).toBe(true)
   expect(chat.pcb_ir.components).toHaveLength(2)
+  expect(interviewCalls).toBe(2)
+  await page.getByRole('main').getByRole('button',{name:'BOM',exact:true}).click()
+  await expect(page.getByText('Catalogue source',{exact:true}).first()).toBeVisible()
+  await expect(page.getByRole('cell').filter({hasText:mcu?'$2.35':'$0.001900'}).first()).toBeVisible()
   if (mcu) {
+    await page.getByRole('button',{name:'Edit component U1',exact:true}).click()
+    await page.getByRole('textbox',{name:'Manufacturer part number',exact:true}).fill('')
+    await page.getByRole('textbox',{name:'Component package',exact:true}).fill('')
+    await page.getByRole('textbox',{name:'LCSC component ID',exact:true}).fill('C14877')
+    page.once('dialog',(dialog)=>void dialog.accept())
+    await page.getByRole('button',{name:'Resolve component',exact:true}).click()
+    await expect(page.getByRole('group',{name:'Edit component U1'})).toHaveCount(0)
+    expect(chat.pcb_ir.components[0].part_number).toBe('ATMEGA328P-AU')
+    expect(inferenceCalls).toBe(2)
     await page.getByRole('main').getByRole('button',{name:'Code',exact:true}).click()
     await page.getByRole('button',{name:'Code Assistant',exact:true}).click()
     const request=page.getByPlaceholder('Ask for changes...')
@@ -82,6 +112,7 @@ for (const mcu of [false,true]) test(`saves a signed-in ${mcu ? 'MCU firmware' :
   expect(Object.keys(archive)).toEqual(expect.arrayContaining(['README.md','project.json','pcb-ir.json','bom.csv','board/circuit.json','board/pcb.svg','board/schematic.svg']))
   expect(JSON.parse(strFromU8(archive['pcb-ir.json'])).components).toHaveLength(2)
   expect(strFromU8(archive['bom.csv'])).toContain('R1')
+  expect(strFromU8(archive['bom.csv'])).toContain('unit_price_usd')
   await page.reload()
   await page.getByRole('main').getByRole('button',{name:'PCB',exact:true}).click()
   await expect(page.getByText('Unverified browser preview')).toBeVisible()

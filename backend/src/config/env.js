@@ -28,6 +28,9 @@ const isProduction = nodeEnv === 'production';
 const isTest = nodeEnv === 'test';
 const browserComputeOnly = asBoolean(process.env.BROWSER_COMPUTE_ONLY || 'false');
 const billingEnabled = asBoolean(process.env.BILLING_ENABLED || 'false');
+// Explicit local testing switch. Production always enforces the deployed
+// quota, even if a developer accidentally copies this setting into hosting.
+const disableCreditsForTesting = nodeEnv === 'development' && asBoolean(process.env.DISABLE_CREDITS_FOR_TESTING || 'false');
 
 export const env = Object.freeze({
   nodeEnv,
@@ -38,6 +41,9 @@ export const env = Object.freeze({
   // Database
   mongoUri: required('MONGODB_URI', 'mongodb://127.0.0.1:27017/dunkai'),
   mongoDbName: process.env.MONGODB_DB_NAME || '',
+  // Recover Atlas SRV/TXT DNS failures on local hotspots over HTTPS. Hosted
+  // deployments opt in explicitly; non-Atlas MongoDB names are excluded.
+  mongoDnsFallback: asBoolean(process.env.MONGODB_DNS_FALLBACK ?? String(nodeEnv === 'development')),
 
   // JWT
   accessSecret: required('JWT_ACCESS_SECRET', 'dev-access-secret-change-me'),
@@ -92,12 +98,12 @@ export const env = Object.freeze({
   // hashed to 32 bytes. Rotating it makes stored keys unreadable (users re-enter).
   byokEncryptionKey: process.env.BYOK_ENCRYPTION_KEY || '',
 
-  // Billing. Off by default, so local and self-hosted installs have no quotas.
-  // The hosted service sets BILLING_ENABLED=true.
+  // Billing controls checkout. Browser quotas are enforced independently.
   billingEnabled,
   // Free hosted model requests still need an enforced quota when purchases
   // are closed. Metering is independent from Stripe checkout availability.
-  creditMeteringEnabled: billingEnabled || browserComputeOnly,
+  disableCreditsForTesting,
+  creditMeteringEnabled: !disableCreditsForTesting && (billingEnabled || browserComputeOnly),
   stripeSecretKey: process.env.STRIPE_SECRET_KEY || '',
   stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET || '',
   redisUrl: process.env.REDIS_URL || '',

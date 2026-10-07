@@ -197,7 +197,7 @@ export const chatApi = {
 
 // ---- AI API ----
 export const aiApi = {
-  browserInference: (messages: Array<{ role: 'user' | 'assistant'; content: string }>, requestId: string, signal?: AbortSignal, purpose: 'design' | 'firmware' | 'revision' = 'design') =>
+  browserInference: (messages: Array<{ role: 'user' | 'assistant'; content: string }>, requestId: string, signal?: AbortSignal, purpose: 'design' | 'firmware' | 'revision' | 'interview' = 'design') =>
     request<{ content: string; model: string; usage: Record<string, number> }>('/ai/browser-inference', {
       method: 'POST', signal, body: JSON.stringify({ messages, requestId, purpose }),
     }),

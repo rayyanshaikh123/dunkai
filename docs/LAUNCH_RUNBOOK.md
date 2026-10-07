@@ -1,5 +1,9 @@
 # Browser runtime deployment runbook
 
+## Temporary local credit testing
+
+Set `DISABLE_CREDITS_FOR_TESTING=true` in the backend env file and restart `npm run dev` to bypass monthly allowances and credit reservations during local testing. This applies only to `NODE_ENV=development`; production and automated test environments ignore the switch. Set it back to `false` and restart to restore local credit enforcement. This does not reset balances, remove authentication/rate limits, or change Groq's own quotas. Credit test scripts explicitly turn the bypass off. API credit-limit failures display the backend message in a toast.
+
 Use your existing frontend host, Node backend and MongoDB Atlas. The remaining AI engine is delivered as browser code and workers; there is no separate AI engine to host. `render.yaml` now describes a free Node API only. The previous paid engine/Redis/worker blueprint is preserved as `render.cloud.yaml` for the legacy cloud path. Do not apply a new blueprint to replace existing services blindly; for your hosted API, update its environment and redeploy it.
 
 ## 1. Existing Node backend
@@ -37,6 +41,14 @@ Render backend root is `backend`, build `npm ci --omit=dev`, start `npm start`, 
 
 Locally the Node app loads `backend/.env` by default. **It does not automatically load `backend/.env.local`.** Set `DOTENV_CONFIG_PATH=.env.local npm run dev` from `backend/` to use that file, or copy intended values into `.env`. Host dashboard variables take precedence.
 
+### Atlas DNS failures on hotspots
+
+`querySrv ECONNREFUSED _mongodb._tcp...` means the DNS seed lookup failed before database authentication. If the hotspot/ISP resolver intermittently refuses SRV/TXT lookups, local development now retries Atlas discovery over HTTPS using Cloudflare, then Google if needed. The fallback builds a fresh standard seed list, preserves the database, credentials, URI options and DNS authentication/replica-set options, and requires verified TLS. Only the Atlas hostname is sent to the resolvers; the private connection string is never sent or logged. No cluster hostnames are hardcoded.
+
+`MONGODB_DNS_FALLBACK` defaults to `true` in development and `false` in production/tests. Set it explicitly to `true` on a public Atlas deployment if needed, or `false` to disable it. Private Atlas endpoints should keep it off. Other database URIs and backend services continue to use their normal DNS. Restart `npm run dev` after changing backend environment variables; no OS DNS changes are required.
+
+This recovers SRV/TXT lookup failures; it does not bypass Atlas IP access controls or a network blocking MongoDB port 27017. If the subsequent connection times out after switching networks, add your current public IP in Atlas **Network Access** and confirm the network permits outbound database connections. See [MongoDB's connection troubleshooting](https://www.mongodb.com/docs/atlas/troubleshoot-connection/) for the documented DNS and network checks.
+
 ## 2. Existing frontend (Vercel)
 
 Project root: `frontend`. Build command: `npm run build`. Set all four variables before rebuilding:
@@ -65,7 +77,7 @@ Do not put a Groq key, Atlas URI, Stripe secret or encryption key into frontend 
 
 The free model quota runs with Stripe disabled. To sell credits, configure the existing INR Stripe account and test Checkout plus signed webhook delivery before setting `BILLING_ENABLED=true`. Use `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` on the Node API only. Webhook path: `/api/v1/billing/webhook`. Event types: `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `charge.refunded`, `charge.dispute.created`.
 
-Test pack amounts, duplicate webhook replay, invalid signatures, refunds and disputes against the real test account. Credit grants come only from verified server webhook handling. Browser success redirects grant nothing. Keep SMTP configured for account recovery if purchases are enabled. Measure Groq usage and merchant fees before describing a profit margin. Existing packs: 200 credits/₹200, 500/₹500, 1500/₹1500. Each design uses two credits for one model request or four when a firmware request also applies, after the monthly free allowance. Local compute and BYOK use zero DunkAI credits.
+Test pack amounts, duplicate webhook replay, invalid signatures, refunds and disputes against the real test account. Credit grants come only from verified server webhook handling. Browser success redirects grant nothing. Keep SMTP configured for account recovery if purchases are enabled. Measure Groq usage and merchant fees before describing a profit margin. Existing packs: 200 credits/₹200, 500/₹500, 1500/₹1500. Each hosted model turn costs two credits after the monthly free allowance, including adaptive interview turns. A detailed brief normally uses one interview turn, one design turn and an optional firmware turn (four to six credits). Each follow-up answer adds one interview model turn; interviews have no fixed question-count cap, so total credits depend on the clarification needed. Component refresh, prices, local PCB computation and BYOK use zero DunkAI credits.
 
 ## Checks in the repository
 

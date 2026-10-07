@@ -1,4 +1,5 @@
 import type { CircuitWebWorker } from '@tscircuit/eval/worker'
+import { wrap, releaseProxy, type Remote } from 'comlink'
 import { compileBrowserIr } from './passive-ir'
 import { renderBrowserPreviews } from './render-browser-previews'
 
@@ -8,12 +9,13 @@ export type BrowserBoardResult = {
   circuitJson: Array<{ type: string }>
 }
 
-let activeWorker: CircuitWebWorker | null = null
+type Evaluator = Pick<CircuitWebWorker, 'executeWithFsMap' | 'renderUntilSettled' | 'getCircuitJson'> & { setDisableCdnLoading: (value: boolean) => Promise<void> }
+let activeWorker: Worker | null = null
 let activeAbort: AbortController | null = null
 
 export function cancelBrowserBoard() {
   activeAbort?.abort()
-  void activeWorker?.kill().catch(() => {})
+  activeWorker?.terminate()
 }
 
 /** No user/model-authored TSX is accepted. Only the validated IR compiler emits code. */
@@ -25,34 +27,45 @@ export async function runBrowserBoard(
   const compiled = compileBrowserIr(ir)
   const controller = new AbortController()
   activeAbort = controller
-  let worker: CircuitWebWorker | null = null
+  let worker: Worker | null = null
+  let evaluator: Remote<Evaluator> | null = null
   const timeout = setTimeout(() => {
-    controller.abort()
-    void worker?.kill().catch(() => {})
+    controller.abort(new Error('Board generation timed out'))
+    worker?.terminate()
   }, 5 * 60_000)
   const check = () => {
-    if (controller.signal.aborted) throw new Error('Board generation cancelled')
+    if (controller.signal.aborted) throw controller.signal.reason instanceof Error ? controller.signal.reason : new Error('Board generation cancelled')
   }
+  // Terminating a Comlink worker does not reject outstanding RPC promises.
+  // Race every call against abort so cancellation always releases this run.
+  const abortable = <T>(operation: Promise<T>): Promise<T> => new Promise((resolve, reject) => {
+    const abort = () => { cleanup(); reject(controller.signal.reason instanceof Error ? controller.signal.reason : new Error('Board generation cancelled')) }
+    const cleanup = () => controller.signal.removeEventListener('abort', abort)
+    controller.signal.addEventListener('abort', abort, { once: true })
+    operation.then((value) => { cleanup(); resolve(value) }, (error) => { cleanup(); reject(error) })
+    if (controller.signal.aborted) abort()
+  })
   try {
     onProgress('load', 'Loading the PCB engine in this browser…')
-    const { createCircuitWebWorker } = await import('@tscircuit/eval/worker')
     check()
-    worker = await createCircuitWebWorker({
-      webWorkerBlobUrl: '/vendor/tscircuit-eval-worker.js',
-      disableCdnLoading: true,
-      enableFetchProxy: false,
-    })
+    worker = new Worker('/vendor/tscircuit-eval-worker.js', { type: 'module', name: 'dunkai-pcb-evaluator' })
     activeWorker = worker
+    worker.onerror = () => controller.abort(new Error('The PCB evaluator worker could not run'))
+    worker.onmessageerror = () => controller.abort(new Error('The PCB evaluator returned unreadable data'))
+    evaluator = wrap<Evaluator>(worker)
+    await abortable(evaluator.setDisableCdnLoading(true))
     check()
     onProgress('pcb', `Routing ${compiled.componentCount} components and ${compiled.netCount} nets…`)
-    await worker.executeWithFsMap({ fsMap: { 'index.tsx': compiled.code }, mainComponentPath: 'index.tsx' })
-    await worker.renderUntilSettled()
+    await abortable(evaluator.executeWithFsMap({ fsMap: { 'index.tsx': compiled.code }, mainComponentPath: 'index.tsx' }))
+    await abortable(evaluator.renderUntilSettled())
     check()
-    const circuitJson = await worker.getCircuitJson()
+    const circuitJson = await abortable(evaluator.getCircuitJson())
     check()
     // Release the heavy evaluator before creating the preview worker. Keep
     // the number of concurrently active compute workers bounded.
-    await worker.kill()
+    evaluator[releaseProxy]()
+    evaluator = null
+    worker.terminate()
     activeWorker = null
     worker = null
     check()
@@ -61,7 +74,8 @@ export async function runBrowserBoard(
     return { ...previews, circuitJson }
   } finally {
     clearTimeout(timeout)
-    if (worker) await worker.kill().catch(() => {})
+    if (evaluator) evaluator[releaseProxy]()
+    worker?.terminate()
     if (activeWorker === worker) activeWorker = null
     if (activeAbort === controller) activeAbort = null
   }

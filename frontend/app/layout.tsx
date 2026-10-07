@@ -7,6 +7,7 @@ import { ThemeProvider } from '@/components/theme-provider'
 import { AuthProvider } from '@/lib/auth-context'
 import { QueryProvider } from '@/lib/query-provider'
 import { PageTransition } from '@/components/page-transition'
+import { Toaster } from '@/components/ui/sonner'
 
 // Figtree stands in for Google Sans, which next/font cannot load: same open,
 // geometric shapes. It sets both body text and headings (`font-display`).
@@ -72,6 +73,7 @@ export default function RootLayout({
               <PageTransition />
             </AuthProvider>
           </QueryProvider>
+          <Toaster position="top-right" richColors closeButton />
         </ThemeProvider>
         {/* Vercel Analytics only exists on Vercel; elsewhere its script 404s. */}
         {process.env.VERCEL ? <Analytics /> : null}

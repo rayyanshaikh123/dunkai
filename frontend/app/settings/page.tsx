@@ -235,6 +235,7 @@ function KeyRow({ status }: { status: ApiKeyStatus }) {
 }
 
 function SettingsContent() {
+  const browserMode = process.env.NEXT_PUBLIC_BROWSER_COMPUTE_ONLY === 'true'
   const router = useRouter()
   const { theme, setTheme } = useTheme()
   const [mounted, setMounted] = useState(false)
@@ -292,7 +293,7 @@ function SettingsContent() {
           <p className="mt-2 text-muted-foreground">Your credits, API keys, and how DunkAI looks.</p>
         </div>
 
-        <Section icon={Gauge} title="Credits & usage" description="Free hosted chats, prepaid credits, and compute charges for longer jobs.">
+        <Section icon={Gauge} title="Credits & usage" description={browserMode ? 'Monthly free model requests and prepaid credits. Local computation uses no credits.' : 'Free hosted chats, prepaid credits, and compute charges for longer jobs.'}>
           <UsageCard />
         </Section>
 
@@ -304,7 +305,8 @@ function SettingsContent() {
           <div className="space-y-3">
             {keys.isLoading && <div className="h-28 animate-pulse rounded-2xl bg-secondary" />}
             {keys.isError && <p className="text-sm text-destructive">Could not load your keys. Try refreshing.</p>}
-            {keys.data?.map((k) => <KeyRow key={k.provider} status={k} />)}
+            {keys.data?.filter((k) => !browserMode || k.provider === 'groq').map((k) => <KeyRow key={k.provider} status={k} />)}
+            {browserMode && keys.data?.some((k) => k.provider !== 'groq' && k.configured) && <details><summary className="cursor-pointer text-sm">Other saved keys (not used for browser design)</summary><div className="mt-3 space-y-3">{keys.data.filter((k) => k.provider !== 'groq' && k.configured).map((k) => <KeyRow key={k.provider} status={k} />)}</div></details>}
           </div>
           {providers.data && (
             <p className="mt-4 text-sm text-muted-foreground">
@@ -317,7 +319,9 @@ function SettingsContent() {
           )}
         </Section>
 
-        <Section
+        {browserMode ? <Section icon={CircuitBoard} title="Computation on your device" description="Groq provides the model; your device performs design computation.">
+          <p className="text-sm text-muted-foreground">Confirm a run in the workspace to use this device’s CPU and memory. Keep the tab open, or cancel and resume later on this device. PCB routing, supported firmware compilation and exports use no compute credits.</p>
+        </Section> : <Section
           icon={CircuitBoard}
           title="Board generation model"
           description="Which model lays out the PCB once the pipeline hands off a design."
@@ -340,7 +344,7 @@ function SettingsContent() {
               className="w-[210px] rounded-xl"
             />
           </div>
-        </Section>
+        </Section>}
 
         <Section icon={Palette} title="Appearance" description="Follow your system, or pick a side.">
           <div role="radiogroup" aria-label="Theme" className="inline-flex rounded-full border border-border bg-secondary p-1">

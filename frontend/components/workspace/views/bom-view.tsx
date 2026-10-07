@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import {
@@ -24,7 +24,10 @@ import {
 } from '@/components/ui/table';
 import { useWorkspaceStore } from '@/lib/store';
 import { useBoardGeneration } from '@/hooks/use-board-generation';
-import { billingApi } from '@/lib/api';
+import { billingApi, chatApi } from '@/lib/api';
+import { Input } from '@/components/ui/input';
+import { toast } from 'sonner';
+import { refreshComponents } from '@/lib/browser-pipeline/refresh-components';
 
 interface BOMViewProps {
   projectId: string;
@@ -65,6 +68,10 @@ interface BomRow {
   lcsc?: string;
   stock?: string | number;
   status?: string;
+  status_reason?: string;
+  price_reason?: string;
+  source_url?: string;
+  price_checked_at?: string;
 }
 
 interface BomData {
@@ -77,6 +84,7 @@ interface BomData {
         total_line_items?: number;
         total_cost_usd?: number;
         unfilled_references?: string[];
+        unpriced_line_items?: number;
       }
     | string;
 }
@@ -112,7 +120,7 @@ const extendedPriceUsd = (r: BomRow): number | null => {
 
 const formatINR = (usd: number) =>
   `₹${(usd * USD_TO_INR).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-const formatUSD = (usd: number) => `$${usd.toFixed(2)}`;
+const formatUSD = (usd: number) => `$${usd > 0 && usd < 0.01 ? usd.toFixed(6) : usd.toFixed(2)}`;
 
 export function BOMView({ projectId }: BOMViewProps) {
   const aiOutput = useWorkspaceStore((s) => s.aiOutput);
@@ -121,6 +129,11 @@ export function BOMView({ projectId }: BOMViewProps) {
   const bom = aiOutput?.bom as BomData | null | undefined;
   const [currency, setCurrency] = useState<'INR' | 'USD'>('USD');
   const [billingEnabled, setBillingEnabled] = useState(false);
+  const [refreshing,setRefreshing]=useState(false);
+  const [editing,setEditing]=useState<{ref:string;mpn:string;pkg:string;lcsc:string}|null>(null);
+  const refreshAbort=useRef<AbortController|null>(null);
+  const browserMode=process.env.NEXT_PUBLIC_BROWSER_COMPUTE_ONLY==='true'||process.env.NEXT_PUBLIC_BROWSER_PCB_ENABLED==='true';
+  useEffect(()=>()=>refreshAbort.current?.abort(),[activeChatId]);
   useEffect(() => {
     billingApi.plans().then((plans) => setBillingEnabled(plans.billingEnabled)).catch(() => {});
   }, []);
@@ -141,6 +154,34 @@ export function BOMView({ projectId }: BOMViewProps) {
   const rows: BomRow[] = bom?.rows ?? bom?.components ?? [];
 
   const summaryObj = typeof bom?.summary === 'object' && bom.summary !== null ? bom.summary : null;
+  const unpriced=rows.filter(row=>unitPriceUsd(row)===null).length;
+  const handoffIssues=Array.isArray(aiOutput?.handoff_validation?.issues)?aiOutput.handoff_validation.issues as Array<{message?:string}>:[];
+  const refresh = async (replacement=editing) => {
+    if(refreshing||!activeChatId||!aiOutput?.pcb_ir)return;
+    if(!window.confirm('Look up components and prices on this device? No model credits are used. Changed components require a new board and firmware review.'))return;
+    const target=activeChatId,original=aiOutput.pcb_ir;
+    const controller=new AbortController();refreshAbort.current=controller;setRefreshing(true);
+    try {
+      const parts=Array.isArray(original.components)?original.components as Array<Record<string,unknown>>:[];
+      const ir={...original,components:parts.map(part=>replacement&&part.ref_id===replacement.ref?{...part,part_number:replacement.mpn||replacement.lcsc,package:replacement.pkg||'CUSTOM',lcsc:replacement.lcsc||undefined}:part)};
+      const output=await refreshComponents(ir,controller.signal);
+      if(controller.signal.aborted||useWorkspaceStore.getState().activeChatId!==target)throw new Error('Component refresh cancelled');
+      if(JSON.stringify(useWorkspaceStore.getState().aiOutput?.pcb_ir)!==JSON.stringify(original))throw new Error('The design changed during lookup. Refresh again.');
+      const canonical=(value:unknown)=>JSON.stringify(value,(_key,item)=>item&&typeof item==='object'&&!Array.isArray(item)?Object.fromEntries(Object.entries(item).sort(([a],[b])=>a.localeCompare(b))):item);
+      const changed=canonical(output.pcb_ir)!==canonical(original);
+      // Keep the exact saved source when only object key order changed, so
+      // its private board hash and firmware remain valid after a price refresh.
+      if(!changed)output.pcb_ir=original;
+      const patch={...output,...(changed?{code_generation:{files:[],error:'Components changed. Regenerate firmware from the confirmed pin mapping.'}}:{})};
+      await chatApi.updateArtifacts(target,patch);
+      if(controller.signal.aborted||useWorkspaceStore.getState().activeChatId!==target)return;
+      useWorkspaceStore.getState().setAiOutput({...patch,...(!changed&&aiOutput.board?{board:aiOutput.board}:{})});
+      useWorkspaceStore.getState().resetBoardJob();
+      setEditing(null);
+      toast.success(output.handoff_validation?.well_formed?'Component data updated. The board is ready for local generation.':'Component data updated. Review the remaining component or pin findings.');
+    } catch(error){if(!controller.signal.aborted)toast.error(error instanceof Error?error.message:'Component lookup failed');}
+    finally {if(refreshAbort.current===controller){refreshAbort.current=null;setRefreshing(false);}}
+  };
 
   /**
    * Total in USD, or null when nothing in the BOM carries a price.
@@ -189,7 +230,7 @@ export function BOMView({ projectId }: BOMViewProps) {
   /** Both currencies are exported, so the file does not depend on the toggle. */
   const buildCsv = () =>
     [
-      ['Designator', 'Component', 'Qty', 'Category', 'Unit Cost (USD)', 'Unit Cost (INR)', 'Availability'].join(','),
+      ['Designator', 'Component', 'Qty', 'Category', 'Unit Cost (USD)', 'Indicative Unit Cost (INR)', 'Availability', 'LCSC', 'Source', 'Checked At'].join(','),
       ...rows.map((r) => {
         const unit = unitPriceUsd(r);
         return [
@@ -197,10 +238,11 @@ export function BOMView({ projectId }: BOMViewProps) {
           r.mfr_part ?? r.component ?? r.part_number ?? '',
           String(quantityOf(r)),
           r.category ?? '',
-          unit === null ? '' : unit.toFixed(2),
+          unit === null ? '' : String(unit),
           unit === null ? '' : (unit * USD_TO_INR).toFixed(2),
           String(r.availability ?? r.stock ?? ''),
-        ].join(',');
+          r.lcsc??'',r.source_url??'',r.price_checked_at??'',
+        ].map(value=>{const text=String(value);return `"${(/^[=+@\-\t\r]/.test(text)?"'":'')+text.replace(/"/g,'""')}"`}).join(',');
       }),
     ].join('\n');
 
@@ -257,6 +299,7 @@ export function BOMView({ projectId }: BOMViewProps) {
                 <Download className="w-4 h-4 mr-2" />
                 Export
               </Button>
+              {browserMode&&<Button variant="outline" size="sm" disabled={refreshing||job.status==='running'||!aiOutput?.pcb_ir} onClick={()=>void refresh(null)}>{refreshing?'Looking up…':'Refresh components'}</Button>}
               {board ? (
                 <Button size="sm" onClick={() => setActiveTab('pcb')}>
                   View PCB
@@ -286,6 +329,20 @@ export function BOMView({ projectId }: BOMViewProps) {
             </div>
           </div>
 
+          {browserMode&&handoffIssues.length>0&&<div className="rounded-lg border border-destructive/30 p-3 text-xs" role="status" aria-label="Component findings">
+            <p className="font-semibold">Resolve these component and pin findings before generating the board.</p>
+            <ul className="mt-2 list-disc space-y-1 pl-4">{handoffIssues.map((issue,index)=><li key={index}>{issue.message}</li>)}</ul>
+            <p className="mt-2 text-muted-foreground">Use Edit component with a verified manufacturer number and LCSC ID, or revise the design in Chat. External modules need a supported footprint or a carrier connector.</p>
+          </div>}
+          {editing&&<div className="rounded-lg border p-3 space-y-2" role="group" aria-label={`Edit component ${editing.ref}`}>
+            <p className="text-sm font-medium">Edit {editing.ref}</p>
+            <Input aria-label="Manufacturer part number" placeholder="Manufacturer part number (or leave blank with LCSC ID)" value={editing.mpn} onChange={event=>setEditing({...editing,mpn:event.target.value})}/>
+            <Input aria-label="Component package" placeholder="Package (blank uses catalogue package)" value={editing.pkg} onChange={event=>setEditing({...editing,pkg:event.target.value})}/>
+            <Input aria-label="LCSC component ID" placeholder="LCSC ID, e.g. C14877" value={editing.lcsc} onChange={event=>setEditing({...editing,lcsc:event.target.value.toUpperCase()})}/>
+            <Button size="sm" disabled={refreshing||(!editing.mpn&&!/^C[1-9][0-9]{0,9}$/.test(editing.lcsc))} onClick={()=>void refresh()}>Resolve component</Button>
+            <Button variant="ghost" size="sm" disabled={refreshing} onClick={()=>setEditing(null)}>Cancel</Button>
+          </div>}
+
           {job.status === 'error' && (
             <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 p-3">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
@@ -311,9 +368,10 @@ export function BOMView({ projectId }: BOMViewProps) {
             </div>
             <div className="bg-secondary rounded-lg border border-border p-4">
               <p className="text-xs text-muted-foreground uppercase tracking-wider">
-                Estimated Cost ({currency})
+                {unpriced>0?'Known-price subtotal':'Estimated Cost'} ({currency})
               </p>
               <p className="text-2xl font-bold mt-1">{totalFormatted ?? '—'}</p>
+              <p className="mt-1 text-xs text-muted-foreground">{rows.length-unpriced}/{rows.length} priced. Catalogue unit prices exclude shipping, taxes and assembly.{currency==='INR'?` Indicative conversion: ₹${USD_TO_INR}/USD.`:''}</p>
             </div>
             <div className="bg-secondary rounded-lg border border-border p-4">
               <p className="text-xs text-muted-foreground uppercase tracking-wider">Categories</p>
@@ -347,6 +405,8 @@ export function BOMView({ projectId }: BOMViewProps) {
                       <TableCell className="h-10 text-xs text-foreground">
                         {item.mfr_part ?? item.part_number ?? item.component ?? '—'}
                         {item.manufacturer ? <span className="text-muted-foreground block text-[10px]">{item.manufacturer}</span> : null}
+                        {item.status_reason&&<span className="block text-[10px] text-destructive">{item.status_reason}</span>}
+                        {browserMode&&<button disabled={refreshing||job.status==='running'} className="mt-1 text-xs text-primary underline" aria-label={`Edit component ${item.reference}`} onClick={()=>setEditing({ref:item.reference||'',mpn:item.mfr_part||item.part_number||'',pkg:item.package||'',lcsc:item.lcsc||''})}>Edit component</button>}
                       </TableCell>
                       <TableCell className="h-10 text-xs text-muted-foreground text-right">
                         {quantityOf(item)}
@@ -358,6 +418,8 @@ export function BOMView({ projectId }: BOMViewProps) {
                       </TableCell>
                       <TableCell className="h-10 text-xs font-semibold text-foreground">
                         {unit === null ? '—' : money(unit)}
+                        {unit===null&&item.price_reason&&<span className="block text-[10px] text-muted-foreground">Quote unavailable</span>}
+                        {item.source_url&&<a className="block text-[10px] text-primary underline" href={item.source_url} target="_blank" rel="noopener noreferrer">Catalogue source</a>}
                       </TableCell>
                       <TableCell className="h-10 text-xs text-accent">
                         {item.availability ?? item.stock ?? '—'}

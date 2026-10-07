@@ -15,6 +15,7 @@ import { useSpeechToText } from '@/hooks/use-speech-to-text'
 import { toast } from 'sonner'
 import { useAuth } from '@/lib/auth-context'
 import { clearCheckpoint, readCheckpoint } from '@/lib/browser-pipeline/checkpoint'
+import { mergeInterviewRequirements, readInterview } from '@/lib/browser-pipeline/interview'
 
 // ---- Message types ----
 type MessageRole = 'user' | 'assistant'
@@ -423,7 +424,68 @@ export function ChatInterface({ projectId }: { projectId: string }) {
   const runAgent = useCallback(
     async (request: string, runAction: PendingAction = 'run_workflow', resume = false) => {
       if (browserComputeOnly && browserRunActiveRef.current) return
-      if (browserComputeOnly && !window.confirm(
+      let interviewConfirmed = false
+      if (browserComputeOnly && !resume) {
+        const output = useWorkspaceStore.getState().aiOutput
+        const requirements = output?.requirements || {}
+        const interview = readInterview(requirements.design_interview)
+        const hasDesign = Array.isArray(output?.pcb_ir?.components) && output!.pcb_ir!.components.length > 0
+        if (interview?.status === 'question' || !interview && !hasDesign) {
+          if (!activeChatId) { toast.error('Wait for the project chat to open, then send your request.'); return }
+          if(!interview && !window.confirm('Start the requirements interview and design on your device? Keep this tab open. Groq model turns may use credits; component lookup and PCB computation run on this device.')){setInput(request);return}
+          interviewConfirmed = true
+          browserRunActiveRef.current = true
+          setLoading(true)
+          setPipelineRun('running')
+          setActiveNode('requirements')
+          const interviewController=new AbortController()
+          browserAbortRef.current=interviewController
+          browserRunTargetRef.current={projectId,chatId:activeChatId}
+          try {
+            const {runBrowserPipeline}=await import('@/lib/browser-pipeline/run-browser-pipeline')
+            const recoveryKey=`${user?._id}:${projectId}:${activeChatId}:interview:${interview?.turn || 0}`
+            const saved=await readCheckpoint(recoveryKey)
+            const next=await runBrowserPipeline(request,messages.map(message=>({role:message.role,content:message.content,options:message.options})),
+              () => setActiveNode('requirements'),interviewController.signal,output,
+              {key:recoveryKey,resume:saved?.input.request===request},{turn:interview?.turn || 0})
+            if(interviewController.signal.aborted)throw new Error('Requirements interview cancelled')
+            const messageId = crypto.randomUUID()
+            await chatApi.saveMessage(activeChatId, 'user', request, undefined, `${messageId}:user`)
+            const state=readInterview(next.requirements?.design_interview) || {version:2,request:interview?.request || request,turn:(interview?.turn || 0)+(next.interview_status==='question'?1:0),status:next.interview_status || 'question'}
+            const captured=mergeInterviewRequirements(requirements,next.requirements)
+            delete captured.design_interview
+            const brief=JSON.stringify({objective:captured.objective,power:captured.power_requirements,budget:captured.budget,inputs:captured.hardware_inputs,outputs:captured.hardware_outputs,functions:captured.functional_requirements,physical:captured.physical_constraints,connectivity:captured.connectivity}).slice(0,1200)
+            const updated = { ...captured, design_interview:state, ...(next.interview_status==='complete' ? {design_brief:brief} : {}) }
+            await updateChatArtifacts.mutateAsync({id:activeChatId,data:{requirements:updated}})
+            if (useWorkspaceStore.getState().activeChatId !== activeChatId) return
+            setAiOutput({requirements:updated})
+            setMessages((prev) => [...prev,{id:`${messageId}:user`,role:'user',content:request}])
+            if (next.interview_status==='question') {
+              await chatApi.saveMessage(activeChatId,'assistant',next.interview_question!,next.interview_options,`${messageId}:question`)
+              if(useWorkspaceStore.getState().activeChatId!==activeChatId)return
+              setMessages((prev) => [...prev,{id:`${messageId}:question`,role:'assistant',content:next.interview_question!,options:next.interview_options}])
+              setActiveQuestionId(`${messageId}:question`)
+              setPipelineRun('question')
+              setActiveNode('')
+              return
+            }
+            request = state.request
+          } catch (error) {
+            const message = error instanceof Error ? error.message : 'Could not save the requirements interview'
+            toast.error(message, {id:message})
+            setInput(request)
+            setPipelineRun('error')
+            setActiveNode('')
+            return
+          } finally {
+            browserRunActiveRef.current = false
+            browserAbortRef.current=null
+            browserRunTargetRef.current=null
+            setLoading(false)
+          }
+        }
+      }
+      if (browserComputeOnly && !interviewConfirmed && !window.confirm(
         'Run this design on your device? This browser tab will use CPU and memory and must remain open. Model requests go through DunkAI to Groq and may use credits.'
       )) {
         setInput(request)
@@ -719,6 +781,7 @@ export function ChatInterface({ projectId }: { projectId: string }) {
             postAssistant(BOARD_STARTING, targetChatId)
 
             await generateBoard({ alreadyConfirmed: browserComputeOnly, chatId: targetChatId })
+            if (browserComputeOnly && browserController?.signal.aborted) throw new Error('Run cancelled')
             if (browserController?.signal.aborted) throw new Error('Run cancelled')
 
             // generate() either reached startBoardJob, which means there is a

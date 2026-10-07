@@ -1,6 +1,7 @@
 'use client'
 
 import axios from 'axios'
+import { toast } from 'sonner'
 import type { User, Project, PaginatedResponse, AppNotification } from './types'
 
 export class ApiError extends Error {
@@ -93,7 +94,14 @@ api.interceptors.response.use(
       }
     }
 
-    return Promise.reject(toApiError(error))
+    const failure = toApiError(error)
+    if (failure.statusCode === 402 && typeof window !== 'undefined') {
+      toast.error(failure.message, {
+        id: failure.message,
+        description: 'Add credits or use your own Groq key in Settings to continue.',
+      })
+    }
+    return Promise.reject(failure)
   }
 )
 
