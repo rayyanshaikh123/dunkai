@@ -20,7 +20,7 @@ await sourceTree('ai_engine/agents', ['.py', '.txt', '.json']);
 await sourceTree('ai_engine/data/profiles', ['.json']);
 await sourceTree('dunkai-designer/src', ['.mjs', '.js', '.json', '.ts']);
 await sourceTree('runtime/src', ['.mjs']);
-for (const name of ['ai_engine/requirement.txt', 'dunkai-designer/package.json', 'dunkai-designer/package-lock.json',
+for (const name of ['ai_engine/requirements.txt', 'dunkai-designer/package.json', 'dunkai-designer/package-lock.json',
   'dunkai-designer/.npmrc', 'runtime/Dockerfile', 'runtime/start.sh', 'runtime/start.command', 'runtime/start.bat', 'runtime/runtime.env.example', '.dockerignore', 'docs/LOCAL_RUNTIME.md']) await add(name);
 const table = Array.from({ length: 256 }, (_, index) => { let c = index; for (let bit = 0; bit < 8; bit++) c = c & 1 ? 0xedb88320 ^ c >>> 1 : c >>> 1; return c >>> 0; });
 const crc32 = (bytes) => { let crc = 0xffffffff; for (const byte of bytes) crc = table[(crc ^ byte) & 255] ^ crc >>> 8; return (crc ^ 0xffffffff) >>> 0; };

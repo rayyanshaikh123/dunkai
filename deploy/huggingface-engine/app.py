@@ -1,10 +1,10 @@
 import spaces  # Initialize ZeroGPU before importing PyTorch.
 import os
 from pathlib import Path
-
+import uvicorn
 import gradio as gr
 import numpy as np
-import uvicorn
+
 from sentence_transformers import SentenceTransformer
 
 from adapter import EngineProcess, create_app
@@ -40,7 +40,29 @@ with gr.Blocks() as demo:
     result = gr.JSON(label="Embedding result")
     gr.Button("Test component embedding").click(check_embedding, inputs=[], outputs=result)
 
-app = gr.mount_gradio_app(app, demo, path="/")
+app = gr.mount_gradio_app(
+    app,
+    demo,
+    path="/",
+    ssr_mode=False
+)
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=7860)
+    # ZeroGPU normally initializes during demo.launch().
+    # Since DunkAI mounts Gradio inside FastAPI, initialize it manually.
+    if os.environ.get("SPACES_ZERO_GPU", "").lower() in (
+        "true", "1", "yes"
+    ):
+        from spaces.zero import startup as zerogpu_startup
+
+        zerogpu_startup()
+        print("ZeroGPU startup registered successfully", flush=True)
+
+    # One public server for FastAPI + Gradio
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=7860
+    )
+
+

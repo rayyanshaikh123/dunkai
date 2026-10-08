@@ -7,10 +7,10 @@ COPY --from=node:22-slim /usr/local/lib/node_modules /usr/local/lib/node_modules
 RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 NODE_ENV=production
 WORKDIR /srv
-COPY ai_engine/requirement.txt ai_engine/requirement.txt
+COPY ai_engine/requirements.txt ai_engine/requirements.txt
 # Install CPU torch explicitly: an extra index can select a CUDA wheel.
 RUN pip install --index-url https://download.pytorch.org/whl/cpu 'torch>=2.2.0' \
- && pip install -r ai_engine/requirement.txt
+ && pip install -r ai_engine/requirements.txt
 COPY dunkai-designer/package.json dunkai-designer/package-lock.json dunkai-designer/.npmrc dunkai-designer/
 RUN cd dunkai-designer && npm ci --omit=dev && npm cache clean --force
 COPY dunkai-designer/src dunkai-designer/src

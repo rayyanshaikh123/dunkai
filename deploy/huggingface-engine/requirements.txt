@@ -1,5 +1,35 @@
--r ai_engine/requirement.txt
-spaces
-torch>=2.8.0,<3
-httpx>=0.28.1,<1
-uvicorn>=0.30.0
+# Core ML / embeddings
+torch>=2.2.0
+sentence-transformers>=3.0.0
+
+# Hugging Face Hub (dataset access)
+huggingface_hub>=0.24.0
+
+# Vector search
+faiss-cpu>=1.8.0
+
+# Data handling
+pandas>=2.2.0
+# The installed Torch wheel is built against NumPy 1.x. Keep this below 2
+# until Torch is upgraded to a wheel compiled against the NumPy 2 C API.
+numpy>=1.26.0,<2
+pyarrow>=16.0.0
+
+# HTTP (in-memory fetch from HF)
+requests>=2.31.0
+
+# Env var loading
+python-dotenv>=1.0.0
+
+# UI
+gradio>=4.44.0
+
+# LangChain / LangGraph orchestration
+langchain-core>=0.3.0
+langchain-groq>=0.2.0
+langgraph>=0.2.0
+pydantic>=2.0.0
+
+# Supervisor HTTP server
+fastapi>=0.110.0
+uvicorn>=0.27.0

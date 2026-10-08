@@ -25,7 +25,7 @@ def build():
             if not file.is_file() or file.suffix not in extensions: continue
             if any(part.startswith((".", "test", "__pycache__")) for part in file.relative_to(ROOT / directory).parts): continue
             add(file.relative_to(ROOT).as_posix())
-    for file in ["ai_engine/requirement.txt", "dunkai-designer/package.json", "dunkai-designer/package-lock.json", "dunkai-designer/.npmrc"]: add(file)
+    for file in ["ai_engine/requirements.txt", "dunkai-designer/package.json", "dunkai-designer/package-lock.json", "dunkai-designer/.npmrc"]: add(file)
     for name in ["README.md", "app.py", "adapter.py", "bootstrap.py", "requirements.txt", "packages.txt"]:
         add("deploy/huggingface-engine/" + name, name)
     (DESTINATION / ".gitignore").write_text(".env\n.env.*\n__pycache__/\n*.pyc\nnode_modules/\n.cache/\n*.log\n")
