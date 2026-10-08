@@ -11,6 +11,8 @@ import { CreditEntry } from '../models/CreditEntry.js';
 import { Usage } from '../models/Usage.js';
 import { AiJob } from '../models/AiJob.js';
 import { BoardArtifact } from '../models/BoardArtifact.js';
+import { Payment } from '../models/Payment.js';
+import { StripeEvent } from '../models/StripeEvent.js';
 
 export const connectDatabase = async () => {
   mongoose.set('strictQuery', true);
@@ -31,6 +33,7 @@ export const connectDatabase = async () => {
     // requests before it exists could run two concurrent Groq calls for one ID.
     if (env.localRuntimeEnabled || env.creditMeteringEnabled) {
       const models = [Message, AiJob, BoardArtifact, Wallet, AiCharge, CreditEntry, Usage];
+      if (env.billingEnabled) models.push(Payment, StripeEvent);
       if (env.localRuntimeEnabled) models.push(RuntimeDevice, RuntimePairing, RuntimeInference);
       await Promise.all(models.map((model) => model.createIndexes()));
     }
@@ -44,13 +47,14 @@ export const connectDatabase = async () => {
       if (process.env.DUNKAI_WORKER !== 'true' && (!env.stripeSecretKey || !env.stripeWebhookSecret)) {
         throw new Error('Credit billing requires STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET');
       }
-      if (!env.localRuntimeEnabled && (!env.aiQueueEnabled || !env.redisUrl)) {
-        throw new Error('Credit billing requires AI_QUEUE_ENABLED=true and REDIS_URL');
+      if (process.env.DUNKAI_WORKER !== 'true' && !env.stripeWebhookSecret.startsWith('whsec_')) {
+        throw new Error('STRIPE_WEBHOOK_SECRET must be a signing secret starting with whsec_');
       }
       if (env.isProduction && process.env.DUNKAI_WORKER !== 'true' && !env.emailHost) {
         throw new Error('Credit billing requires EMAIL_HOST for account verification and password reset');
       }
     }
+    if (env.aiQueueEnabled && !env.redisUrl) throw new Error('AI_QUEUE_ENABLED=true requires REDIS_URL');
     console.log(`MongoDB connected: ${conn.connection.host}/${conn.connection.name}`);
     return conn;
   } catch (error) {

@@ -109,9 +109,11 @@ function UsageCard() {
           <div className="grid gap-4 sm:grid-cols-3">
             <div className="rounded-2xl bg-secondary p-4"><p className="text-xs text-muted-foreground">Available credits</p><p className="mt-1 text-2xl font-semibold">{wallet.available}</p></div>
             <div className="rounded-2xl bg-secondary p-4"><p className="text-xs text-muted-foreground">Trial / paid</p><p className="mt-1 text-lg font-semibold">{wallet.trialAvailable} / {wallet.paidAvailable}</p></div>
-            <div className="rounded-2xl bg-secondary p-4"><p className="text-xs text-muted-foreground">{plans.data?.localRuntimeEnabled ? 'Free hosted model calls' : 'Free hosted chats'}</p><p className="mt-1 text-lg font-semibold">{wallet.freeChatsUsed} / {wallet.freeChatsLimit} used</p></div>
+            <div className="rounded-2xl bg-secondary p-4"><p className="text-xs text-muted-foreground">{plans.data?.localRuntimeEnabled ? 'Free hosted model calls' : 'Free design chats'}</p><p className="mt-1 text-lg font-semibold">{wallet.freeChatsUsed} / {wallet.freeChatsLimit} used</p></div>
           </div>
           <p className="text-sm text-muted-foreground">{wallet.reserved} credits reserved for running jobs. Credits are ₹1 of prepaid value and do not expire.</p>
+          {!plans.data?.localRuntimeEnabled && <p className="text-sm text-muted-foreground">Each free chat includes its requirements interview, one complete pipeline, and one PCB generation. Failed attempts can be retried without spending the included run.</p>}
+          {plans.data?.billingMode === 'test' && <p className="text-sm text-muted-foreground">Stripe is in test mode. Checkout uses test cards and does not collect real money.</p>}
           <div className="grid gap-3 sm:grid-cols-3">
             {CREDIT_PACK_COPY.map((pack) => (
               <Button key={pack.id} variant="outline" disabled={!billingEnabled || buying !== null || !plans.data?.packs.some((p) => p.id === pack.id && p.amountPaise === pack.rupees * 100)} onClick={() => buy(pack.id)}>
@@ -120,7 +122,7 @@ function UsageCard() {
             ))}
           </div>
           {buyError && <p className="text-sm text-destructive">{buyError}</p>}
-          {!billingEnabled && <p className="text-sm text-muted-foreground">Credit purchases are closed. Use the free model allowance or a BYOK runtime.</p>}
+          {!billingEnabled && <p className="text-sm text-muted-foreground">Credit purchases are closed. Your included free allowance is still available.</p>}
           <p className="text-xs text-muted-foreground">Payment confirmation updates your balance through Stripe; returning from checkout alone does not add credits.</p>
         </div>
       ) : (

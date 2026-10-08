@@ -9,6 +9,15 @@ const chatSchema = new mongoose.Schema(
     messageCount: { type: Number, default: 0 },
     lastMessageAt: { type: Date, default: Date.now },
 
+    // Server-only monthly entitlement. Kept on the chat so deleting a chat
+    // never resets the account's monthly counter or transfers its allowance.
+    freeDesign: {
+      period: String,
+      pendingJobId: String,
+      completedActions: { type: [String], default: undefined },
+      successfulRequests: Number,
+    },
+
     // Pipeline artifacts, scoped to THIS chat session rather than the project
     // it belongs to — a project can hold several independent conversations
     // (see chatRoutes), each exploring its own requirements/architecture/etc,

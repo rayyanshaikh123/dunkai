@@ -107,7 +107,7 @@ export const sendMessage = async (chatId, { content, attachments = [], agentType
   const chat = await getOwnedChat(chatId, user);
   const jobId = uuidv4();
   const credentials = env.localRuntimeEnabled ? {} : await resolveCredentials(user._id);
-  await reserveCharge(user, jobId, { action: 'chat', byok: Boolean(credentials.groq) });
+  await reserveCharge(user, jobId, { action: 'chat', byok: Boolean(credentials.groq), chatId: chat._id, projectId: chat.project });
 
   // Store user message
   let userMessage;

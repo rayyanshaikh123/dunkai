@@ -17,6 +17,8 @@ const usageSchema = new mongoose.Schema(
     byokMessages: { type: Number, default: 0 },
     byokBoards: { type: Number, default: 0 },
     freeChatsUsed: { type: Number, default: 0 },
+    // Hosted design chats, separate from the legacy per-message counter.
+    freeDesignsUsed: { type: Number, default: 0 },
   },
   { timestamps: true }
 );

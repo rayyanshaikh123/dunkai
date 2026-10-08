@@ -316,16 +316,21 @@ export interface WalletSummary {
   available: number
   freeChatsUsed: number
   freeChatsLimit: number
+  freeAllowanceUnit: 'model_call' | 'design_chat'
   period: string
 }
 
 export interface PublicPlans {
   billingEnabled: boolean
+  billingMode: 'disabled' | 'test' | 'live'
   meteringEnabled: boolean
   localRuntimeEnabled: boolean
   currency: 'INR'
   tariffVersion: number
   freeChatsPerMonth: number
+  freeAllowanceUnit: 'model_call' | 'design_chat'
+  freePipelineRunsPerChat: number
+  freeBoardRunsPerChat: number
   trialCredits: number
   packs: Array<{ id: string; credits: number; amountPaise: number }>
   rates: { chat: number; inference: number | null; pipeline: number; board: number; byokPipeline: number; byokBoard: number }
@@ -354,7 +359,7 @@ export const billingApi = {
   usage: () => request<UsageSummary>('/billing/usage'),
   wallet: () => request<WalletSummary>('/billing/wallet'),
   entries: () => request<Array<{ _id: string; kind: string; availableTrialDelta: number; availablePaidDelta: number; createdAt: string }>>('/billing/entries'),
-  quote: (action: string, byok = false) => request<{ credits: number; kind: string }>(`/billing/quote?${new URLSearchParams({ action, byok: String(byok) })}`),
+  quote: (action: string, byok = false, chatId?: string) => request<{ credits: number; kind: string; included?: boolean }>(`/billing/quote?${new URLSearchParams({ action, byok: String(byok), ...(chatId ? { chatId } : {}) })}`),
   checkout: (packId: string) => request<{ url: string; orderId: string }>('/billing/checkout', { method: 'POST', body: JSON.stringify({ packId }) }),
 }
 

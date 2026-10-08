@@ -28,6 +28,9 @@ export const createCheckout = async (user, packId) => {
   const order = await Payment.create({ orderId, user: user._id, packId, credits: pack.credits, amountPaise: pack.amountPaise });
   const session = await stripe().checkout.sessions.create({
     mode: 'payment',
+    // Use the direct credit-pack checkout contract, independently of the
+    // account's Managed Payments default (which requires tax-code setup).
+    managed_payments: { enabled: false },
     client_reference_id: orderId,
     customer_email: user.email,
     line_items: [{

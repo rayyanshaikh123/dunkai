@@ -36,7 +36,7 @@ import { v4 as uuidv4 } from 'uuid';
  *
  * @returns {{ credentials: object }}
  */
-const prepareAiRequest = async (req, { jobId, action = 'run_workflow', provider = null } = {}) => {
+const prepareAiRequest = async (req, { jobId, action = 'run_workflow', provider = null, chatId = req.body.chatId, projectId = req.body.projectId } = {}) => {
   if (env.localRuntimeEnabled) return { credentials: {} };
   const credentials = await resolveCredentials(req.user._id);
   const have = new Set(Object.keys(credentials));
@@ -44,11 +44,11 @@ const prepareAiRequest = async (req, { jobId, action = 'run_workflow', provider 
   if (action === 'generate_board') {
     const providerId = provider || (await getCapabilities())?.default_board_provider || 'groq';
     const { byok } = await authorizeBoardProvider(req.user, providerId, have);
-    await reserveCharge(req.user, jobId, { action, byok });
+    await reserveCharge(req.user, jobId, { action, byok, chatId, projectId });
     return { credentials };
   }
 
-  await reserveCharge(req.user, jobId, { action, byok: have.has('groq') });
+  await reserveCharge(req.user, jobId, { action, byok: have.has('groq'), chatId, projectId });
   return { credentials };
 };
 

@@ -19,10 +19,11 @@ export function PricingSection() {
           <p className="text-sm font-medium text-muted-foreground">Pricing</p>
           <h2 className="mt-2 text-4xl font-semibold tracking-[-0.03em] sm:text-5xl">Start free. Add credits when you need them.</h2>
           <p className="mt-4 text-lg text-muted-foreground">
-            {plans?.localRuntimeEnabled ? 'Verified accounts get five hosted model calls each month. Run the design agents and PCB tools on your computer for free.' : `Verified accounts get ${plans?.trialCredits ?? 150} one-time trial credits and five hosted chat turns each month.`}
+            {plans?.localRuntimeEnabled ? 'Verified accounts get five hosted model calls each month. Run the design agents and PCB tools on your computer for free.' : `Verified accounts get ${plans?.freeChatsPerMonth ?? 5} free design chats every month. Each includes the requirements interview, a complete design pipeline, and one PCB generation.`}
             Credits never expire. No subscription is required.
           </p>
           {!billingEnabled && <p className="mt-3 text-sm text-muted-foreground">Pricing preview. Credit purchases open after launch checks are complete.</p>}
+          {plans?.billingMode === 'test' && <p className="mt-3 text-sm text-muted-foreground">Stripe test checkout is enabled. Real payments are not available yet.</p>}
         </div>
 
         <div className="mt-14 grid gap-4 lg:grid-cols-3">
@@ -45,7 +46,7 @@ export function PricingSection() {
           ))}
         </div>
         <p className="mt-8 text-center text-sm text-muted-foreground">
-          {plans?.localRuntimeEnabled ? 'Hosted Groq: 2 credits per successful model call after the free allowance. A project can use multiple calls. Local CPU work and BYOK use 0 DunkAI credits.' : 'Typical quotes: chat 2 credits after free turns, design pipeline 30, Groq PCB generation 101. BYOK pipeline compute is 10 credits and board compute is 20.'}
+          {plans?.localRuntimeEnabled ? 'Hosted Groq: 2 credits per successful model call after the free allowance. A project can use multiple calls. Local CPU work and BYOK use 0 DunkAI credits.' : 'Included runs use 0 credits. Additional runs: chat 2 credits, design pipeline 30, Groq PCB generation 101. BYOK pipeline compute is 10 credits and board compute is 20.'}
         </p>
       </div>
     </section>

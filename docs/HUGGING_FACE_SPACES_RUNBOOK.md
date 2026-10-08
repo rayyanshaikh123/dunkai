@@ -35,7 +35,7 @@ SUPERVISOR_AGENT_PATH=/api/v1/supervisor
 LOCAL_RUNTIME_ENABLED=false
 ARCHIVE_SUPERVISOR_ARTIFACTS=true
 AI_QUEUE_ENABLED=false
-BILLING_ENABLED=false
+BILLING_ENABLED=true
 CREDIT_METERING_ENABLED=true
 DISABLE_CREDITS_FOR_TESTING=false
 FRONTEND_URL=https://dunkai.vercel.app
@@ -52,7 +52,17 @@ NEXT_PUBLIC_BACKEND_URL=https://dunkai.onrender.com
 NEXT_PUBLIC_SITE_URL=https://dunkai.vercel.app
 ```
 
-Stripe checkout stays disabled for this pilot; model quotas remain enforced. Enabling payments later requires the launch runbook's Stripe and worker setup.
+Stripe checkout is enabled using the configured **test-mode** credentials. The existing enabled test webhook points to `https://dunkai.onrender.com/api/v1/billing/webhook`. The generated Render file contains the Stripe secret key, webhook signing secret and configured email settings. A real Stripe test Checkout session for the INR 200 credit pack was created and verified, then expired without payment. The invalid local signing secret was replaced with the secret of a newly configured test webhook; import the regenerated Render file to activate it on the hosted backend. Test checkout cannot collect real money. For real payments, configure a live Stripe secret key and a matching live webhook signing secret; never reuse the test signing secret in live mode.
+
+Credit pack sessions explicitly use direct Checkout (`managed_payments.enabled=false`). The account default previously rejected these sessions for missing Managed Payments product tax codes. See the [Stripe Checkout API reference](https://docs.stripe.com/api/checkout/sessions/create).
+
+`AI_QUEUE_ENABLED=false` keeps the existing Node process executing jobs directly with MongoDB job records, credit reservations and interruption reconciliation. Stripe checkout does not require a separate Redis worker. If enabling the optional queue later, supply `REDIS_URL` and run its worker.
+
+## Free design chats
+
+Verified users can start **five design chats per calendar month (UTC)**. Each chat includes requirements clarification, one completed pipeline and one PCB generation at **0 credits**, even when its wallet balance is zero. Additional pipeline/board generations use the published credit quotes. A transport failure, cancellation or failed workflow releases the included operation so it can be retried. A failed first request also returns the monthly slot. Chat deletion does not return a used slot. An unfinished chat can finish its included run after the month changes; a fully completed chat needs another monthly slot for a new free run.
+
+Existing accounts receive this allowance independently of their trial-wallet history. No manual wallet top-up or bulk database migration is needed. The one-time trial-credit bonus remains available under the existing policy; paid balances are preserved.
 
 ## 3. Publish the engine
 

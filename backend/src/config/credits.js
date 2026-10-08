@@ -1,6 +1,6 @@
 // Versioned INR tariffs. These are fixed launch prices until end-to-end Groq
 // token metering is available; never derive a debit from browser-supplied data.
-export const CREDIT_TARIFF_VERSION = 1;
+export const CREDIT_TARIFF_VERSION = 2;
 export const FREE_CHATS_PER_MONTH = 5;
 export const TRIAL_CREDITS = 150;
 

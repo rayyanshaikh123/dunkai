@@ -1,13 +1,13 @@
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { send } from '../utils/response.js';
 import { publicPlans } from '../config/plans.js';
-import { creditQuote } from '../config/credits.js';
 import { getUsageSummary } from '../services/billing.service.js';
 import { walletSummary } from '../services/credits.service.js';
 import { createCheckout, handleStripeEvent, verifyStripeEvent } from '../services/stripe.service.js';
 import { CreditEntry } from '../models/CreditEntry.js';
 import { ApiError } from '../utils/ApiError.js';
 import { env } from '../config/env.js';
+import { quoteCharge } from '../services/credits.service.js';
 
 export const plans = asyncHandler(async (_req, res) => {
   res.set('Cache-Control', 'public, max-age=300');
@@ -31,7 +31,7 @@ export const quote = asyncHandler(async (req, res) => {
   const action = req.query.action, byok = req.query.byok === 'true';
   send(res, { data: env.localRuntimeEnabled && action !== 'local_inference'
     ? { credits: 0, kind: 'local_compute', inferenceCreditsPerCall: byok ? 0 : 2 }
-    : creditQuote({ action, byok }) });
+    : await quoteCharge(req.user, { action, byok, chatId: req.query.chatId }) });
 });
 
 export const checkout = asyncHandler(async (req, res) => {

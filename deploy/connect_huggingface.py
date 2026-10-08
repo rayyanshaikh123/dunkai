@@ -14,6 +14,10 @@ def main():
     reader = engine.get('HF_TOKEN_READ') or backend.get('HF_TOKEN_READ') or engine.get('HF_TOKEN')
     if not supervisor or len(supervisor) < 32: raise SystemExit('Shared supervisor secret is missing')
     if not reader: raise SystemExit('HF read token is missing')
+    stripe_key = backend.get('STRIPE_SECRET_KEY')
+    stripe_webhook = backend.get('STRIPE_WEBHOOK_SECRET')
+    if not stripe_key or not stripe_webhook: raise SystemExit('Configure Stripe secret and webhook keys in backend/.env.local before enabling checkout')
+    if not stripe_webhook.startswith('whsec_'): raise SystemExit('STRIPE_WEBHOOK_SECRET must be a webhook signing secret starting with whsec_')
     settings = {
         'SUPERVISOR_AGENT_URL': 'https://rayyanshk-dunkai.hf.space',
         'SUPERVISOR_AGENT_PATH': '/api/v1/supervisor',
@@ -22,12 +26,16 @@ def main():
         'LOCAL_RUNTIME_ENABLED': 'false',
         'ARCHIVE_SUPERVISOR_ARTIFACTS': 'true',
         'AI_QUEUE_ENABLED': 'false',
-        'BILLING_ENABLED': 'false',
+        'BILLING_ENABLED': 'true',
+        'STRIPE_SECRET_KEY': stripe_key,
+        'STRIPE_WEBHOOK_SECRET': stripe_webhook,
         'CREDIT_METERING_ENABLED': 'true',
         'DISABLE_CREDITS_FOR_TESTING': 'false',
         'FRONTEND_URL': 'https://dunkai.vercel.app',
         'CLIENT_ORIGIN': 'https://dunkai.vercel.app',
     }
+    for name in ('EMAIL_HOST', 'EMAIL_PORT', 'EMAIL_USER', 'EMAIL_PASS', 'EMAIL_FROM'):
+        if backend.get(name): settings[name] = backend[name]
     for name, value in settings.items(): set_key(backend_path, name, value, quote_mode='never')
     os.chmod(backend_path, 0o600)
     destination = ROOT / 'deploy/dist'

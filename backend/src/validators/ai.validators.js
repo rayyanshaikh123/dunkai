@@ -3,6 +3,7 @@ import { BOARD_PROVIDER_IDS } from '../config/providers.js';
 
 export const chatValidation = [
   body('projectId').isMongoId().withMessage('Valid project ID is required'),
+  body('chatId').optional().isMongoId(),
   body('message').isLength({ min: 1, max: 8000 }).withMessage('Message must be 1-8000 characters'),
   body('agentType').optional().isString(),
   body('files').optional().isArray({ max: 5 }),
@@ -10,6 +11,7 @@ export const chatValidation = [
 
 export const codeChatValidation = [
   body('projectId').isMongoId(),
+  body('chatId').optional().isMongoId(),
   body('messages').isArray({ min: 1, max: 40 }),
   body('messages.*.role').isIn(['user', 'assistant']),
   body('messages.*.content').isString().isLength({ max: 8000 }),

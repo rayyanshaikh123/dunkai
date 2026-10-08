@@ -12,5 +12,5 @@ billingRoutes.use(authenticate);
 billingRoutes.get('/usage', c.usage);
 billingRoutes.get('/wallet', c.wallet);
 billingRoutes.get('/entries', c.entries);
-billingRoutes.get('/quote', query('action').isString().notEmpty(), query('byok').optional().isBoolean(), validate, c.quote);
+billingRoutes.get('/quote', query('action').isString().notEmpty(), query('byok').optional().isBoolean(), query('chatId').optional().isMongoId(), validate, c.quote);
 billingRoutes.post('/checkout', body('packId').isIn(Object.keys(CREDIT_PACKS)), validate, c.checkout);

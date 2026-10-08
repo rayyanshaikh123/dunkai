@@ -1,7 +1,8 @@
 import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import mongoose from 'mongoose';
-import { MongoMemoryReplSet } from 'mongodb-memory-server';
+import { connectTestDatabase } from './helpers/database.js';
+import { Usage } from '../src/models/Usage.js';
 import { User } from '../src/models/User.js';
 import { Wallet } from '../src/models/Wallet.js';
 import { Payment } from '../src/models/Payment.js';
@@ -17,19 +18,17 @@ import { generateVerificationToken } from '../src/utils/tokens.js';
 import { verifyEmail } from '../src/services/auth.service.js';
 import { reconcileStaleJobs } from '../src/services/reconcile.service.js';
 
-let mongo;
+let cleanup;
 let user;
 
 before(async () => {
-  mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
-  await mongoose.connect(mongo.getUri());
+  cleanup = await connectTestDatabase();
   await Promise.all([Wallet.init(), Payment.init(), CreditEntry.init()]);
   user = await User.create({ name: 'Test User', email: 'credits@example.com', isVerified: true });
 });
 
 after(async () => {
-  await mongoose.disconnect();
-  await mongo?.stop();
+  await cleanup?.();
 });
 
 test('trial grant, reservation, settlement and retries are idempotent', async () => {
@@ -78,14 +77,15 @@ test('trial credits require a valid unexpired email verification token', async (
   assert.equal((await walletSummary(verified)).trialAvailable, 150);
 });
 
-test('a workflow interview question uses the monthly free chat allowance', async () => {
+test('an unscoped legacy interview retains its per-turn allowance', async () => {
   const interviewer = await User.create({ name: 'Interview User', email: 'interview@example.com', isVerified: true });
   await reserveCharge(interviewer, 'interview-question-1', { action: 'run_workflow' });
   assert.equal((await walletSummary(interviewer)).available, 120);
   await settleCharge('interview-question-1', { interview_status: 'question' });
   const summary = await walletSummary(interviewer);
   assert.equal(summary.available, 150);
-  assert.equal(summary.freeChatsUsed, 1);
+  assert.equal(summary.freeChatsUsed, 0);
+  assert.equal((await Usage.findOne({ user: interviewer._id })).freeChatsUsed, 1);
 });
 
 test('failed job releases its reservation', async () => {

@@ -30,7 +30,21 @@ services:
       - key: CREDIT_METERING_ENABLED
         value: "true"
       - key: BILLING_ENABLED
-        value: "false"
+        value: "true"
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: EMAIL_HOST
+        sync: false
+      - key: EMAIL_PORT
+        sync: false
+      - key: EMAIL_USER
+        sync: false
+      - key: EMAIL_PASS
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
       - key: AI_QUEUE_ENABLED
         value: "false"
       - key: MONGODB_URI

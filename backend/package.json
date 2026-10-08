@@ -13,7 +13,8 @@
     "test:credits": "DISABLE_CREDITS_FOR_TESTING=false LOCAL_RUNTIME_ENABLED=false BILLING_ENABLED=true STRIPE_SECRET_KEY=sk_test_dummy STRIPE_WEBHOOK_SECRET=whsec_dummy node --test test/credits.test.js",
     "lint": "eslint src/",
     "test:runtime": "DISABLE_CREDITS_FOR_TESTING=false LOCAL_RUNTIME_ENABLED=true BILLING_ENABLED=false GROQ_API_KEY=gsk_hosted_test BYOK_ENCRYPTION_KEY=runtime-test-key node --test test/runtime.test.js",
-    "package:runtime": "node scripts/package-runtime.mjs"
+    "package:runtime": "node scripts/package-runtime.mjs",
+    "test:free-designs": "DISABLE_CREDITS_FOR_TESTING=false LOCAL_RUNTIME_ENABLED=false CREDIT_METERING_ENABLED=true node --test test/free-designs.test.js"
   },
   "dependencies": {
     "@socket.io/redis-adapter": "^8.3.0",

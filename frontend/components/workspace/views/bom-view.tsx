@@ -121,6 +121,7 @@ export function BOMView({ projectId }: BOMViewProps) {
   const bom = aiOutput?.bom as BomData | null | undefined;
   const [currency, setCurrency] = useState<'INR' | 'USD'>('USD');
   const [billingEnabled, setBillingEnabled] = useState(false);
+  const [boardQuote, setBoardQuote] = useState<{ credits: number; included?: boolean } | null>(null);
   useEffect(() => {
     billingApi.plans().then((plans) => setBillingEnabled(plans.billingEnabled)).catch(() => {});
   }, []);
@@ -129,6 +130,13 @@ export function BOMView({ projectId }: BOMViewProps) {
   // The model used here is the Settings default ("Default agent/model for PCB
   // generation"); this button only re-runs with it.
   const { generate, canGenerate, componentCount, job, board } = useBoardGeneration(projectId, activeChatId);
+  useEffect(() => {
+    let active = true;
+    setBoardQuote(null);
+    if (activeChatId) billingApi.quote('generate_board', false, activeChatId)
+      .then((quote) => { if (active) setBoardQuote(quote); }).catch(() => {});
+    return () => { active = false; };
+  }, [activeChatId, job.status]);
 
   const startGeneration = () => {
     // Switch to the PCB tab so the run is visible: that view renders the live
@@ -278,7 +286,7 @@ export function BOMView({ projectId }: BOMViewProps) {
                   ) : (
                     <CircuitBoard className="w-4 h-4 mr-2" />
                   )}
-                  {job.status === 'running' ? 'Generating…' : billingEnabled ? 'Generate PCB · up to 101 credits' : 'Generate PCB'}
+                  {job.status === 'running' ? 'Generating…' : boardQuote?.included ? 'Generate PCB · included' : boardQuote ? `Generate PCB · up to ${boardQuote.credits} credits` : billingEnabled ? 'Generate PCB · up to 101 credits' : 'Generate PCB'}
                 </Button>
               )}
             </div>
