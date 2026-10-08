@@ -19,7 +19,6 @@ async function request<T = unknown>(path: string, options: RequestInit = {}): Pr
     url: path,
     method: options.method || 'GET',
     data: body instanceof FormData ? body : typeof body === 'string' ? JSON.parse(body) : body ?? undefined,
-    signal: options.signal ?? undefined,
   }) as Promise<T>
 }
 
@@ -172,20 +171,10 @@ export const chatApi = {
       body: JSON.stringify(data),
     }),
 
-  saveBrowserBoard: (chatId: string, data: {
-    sourceIr: Record<string, unknown>
-    pcbSvg: string
-    schematicSvg: string
-    circuitJson: Array<{ type: string }>
-  }) => request<import('./store').BoardArtifact>(`/chats/${chatId}/browser-board`, {
-    method: 'POST',
-    body: JSON.stringify(data),
-  }),
-
-  saveMessage: (chatId: string, type: 'user' | 'assistant', content: string, options?: string[], clientMessageId?: string) =>
+  saveMessage: (chatId: string, type: 'user' | 'assistant', content: string, options?: string[]) =>
     request(`/chats/${chatId}/messages/save`, {
       method: 'POST',
-      body: JSON.stringify({ type, content, options, clientMessageId }),
+      body: JSON.stringify({ type, content, options }),
     }),
 
   delete: (chatId: string) =>
@@ -197,10 +186,6 @@ export const chatApi = {
 
 // ---- AI API ----
 export const aiApi = {
-  browserInference: (messages: Array<{ role: 'user' | 'assistant'; content: string }>, requestId: string, signal?: AbortSignal, purpose: 'design' | 'firmware' | 'revision' | 'interview' = 'design') =>
-    request<{ content: string; model: string; usage: Record<string, number> }>('/ai/browser-inference', {
-      method: 'POST', signal, body: JSON.stringify({ messages, requestId, purpose }),
-    }),
   chat: (projectId: string, message: string, agentType?: string) =>
     request('/ai/chat', {
       method: 'POST',
@@ -282,6 +267,8 @@ export const aiApi = {
       defaultBoardProvider: string | null
       chat: { byok: boolean; hosted: boolean | null }
       engineReachable: boolean
+      localRuntimeEnabled?: boolean
+      runtime?: RuntimeDevice | null
     }>('/ai/providers'),
 }
 
@@ -335,12 +322,31 @@ export interface WalletSummary {
 export interface PublicPlans {
   billingEnabled: boolean
   meteringEnabled: boolean
+  localRuntimeEnabled: boolean
   currency: 'INR'
   tariffVersion: number
   freeChatsPerMonth: number
   trialCredits: number
   packs: Array<{ id: string; credits: number; amountPaise: number }>
-  rates: { chat: number; browserInference: number | null; pipeline: number | null; board: number | null; byokPipeline: number | null; byokBoard: number | null }
+  rates: { chat: number; inference: number | null; pipeline: number; board: number; byokPipeline: number; byokBoard: number }
+}
+
+export interface RuntimeDevice {
+  id: string
+  name: string
+  mode: 'hosted' | 'byok'
+  preferred: boolean
+  connected: boolean
+  ready: boolean
+  expiresAt: string
+  capabilities: { boardSandbox?: boolean; version?: string }
+}
+export const runtimeApi = {
+  devices: () => request<{ localRuntimeEnabled: boolean; devices: RuntimeDevice[] }>('/runtime/devices'),
+  approve: (code: string) => request<RuntimeDevice>('/runtime/pairing/approve', { method: 'POST', body: JSON.stringify({ code }) }),
+  prefer: (id: string) => request<RuntimeDevice>(`/runtime/devices/${id}/prefer`, { method: 'POST' }),
+  revoke: (id: string) => request(`/runtime/devices/${id}`, { method: 'DELETE' }),
+  download: () => api.get<unknown, Blob>('/runtime/download', { responseType: 'blob' }),
 }
 
 export const billingApi = {

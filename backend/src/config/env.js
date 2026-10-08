@@ -26,7 +26,7 @@ const asTrustProxy = (val, fallback) => {
 const nodeEnv = required('NODE_ENV', 'development');
 const isProduction = nodeEnv === 'production';
 const isTest = nodeEnv === 'test';
-const browserComputeOnly = asBoolean(process.env.BROWSER_COMPUTE_ONLY || 'false');
+const localRuntimeEnabled = asBoolean(process.env.LOCAL_RUNTIME_ENABLED || 'false');
 const billingEnabled = asBoolean(process.env.BILLING_ENABLED || 'false');
 // Explicit local testing switch. Production always enforces the deployed
 // quota, even if a developer accidentally copies this setting into hosting.
@@ -89,21 +89,29 @@ export const env = Object.freeze({
   supervisorUrl: required('SUPERVISOR_AGENT_URL', 'http://127.0.0.1:8000'),
   supervisorPath: required('SUPERVISOR_AGENT_PATH', '/api/v1/supervisor'),
   supervisorToken: process.env.SUPERVISOR_AGENT_TOKEN || '',
-  // Browser mode keeps model inference here, but never starts the Python engine.
-  browserComputeOnly,
+  supervisorHfToken: process.env.SUPERVISOR_HF_TOKEN || '',
+  archiveSupervisorArtifacts: asBoolean(process.env.ARCHIVE_SUPERVISOR_ARTIFACTS || 'false'),
+  // The paired companion executes the original Python engine. Only provider
+  // inference and the control plane remain on this backend.
+  localRuntimeEnabled,
   groqApiKey: process.env.GROQ_API_KEY || '',
-  groqBrowserModel: process.env.GROQ_BROWSER_MODEL || 'openai/gpt-oss-120b',
+  groqModel: process.env.GROQ_MODEL || 'openai/gpt-oss-120b',
+  // Preserve the original engine's safety model and rate-limit fallbacks,
+  // while keeping model selection controlled by the operator.
+  groqRuntimeModels: asList(process.env.GROQ_RUNTIME_MODELS || 'openai/gpt-oss-120b,openai/gpt-oss-20b,openai/gpt-oss-safeguard-20b,qwen/qwen3.8-27b'),
+  groqMaxOutputTokens: Math.min(16384, Math.max(512, asNumber(process.env.GROQ_MAX_OUTPUT_TOKENS || '8192'))),
+  hfTokenRead: process.env.HF_TOKEN_READ || '',
 
   // BYOK: AES-256-GCM key for users' provider keys at rest. Any string; it is
   // hashed to 32 bytes. Rotating it makes stored keys unreadable (users re-enter).
   byokEncryptionKey: process.env.BYOK_ENCRYPTION_KEY || '',
 
-  // Billing controls checkout. Browser quotas are enforced independently.
+  // Checkout and hosted model quotas are controlled independently.
   billingEnabled,
   // Free hosted model requests still need an enforced quota when purchases
   // are closed. Metering is independent from Stripe checkout availability.
   disableCreditsForTesting,
-  creditMeteringEnabled: !disableCreditsForTesting && (billingEnabled || browserComputeOnly),
+  creditMeteringEnabled: !disableCreditsForTesting && (billingEnabled || localRuntimeEnabled || asBoolean(process.env.CREDIT_METERING_ENABLED || 'false')),
   stripeSecretKey: process.env.STRIPE_SECRET_KEY || '',
   stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET || '',
   redisUrl: process.env.REDIS_URL || '',
@@ -149,6 +157,6 @@ if (isProduction && (env.accessSecret.includes('change-me') || env.refreshSecret
 if (isProduction && !env.byokEncryptionKey) {
   throw new Error('BYOK_ENCRYPTION_KEY must be configured in production (encrypts users\' API keys at rest)');
 }
-if (isProduction && !env.browserComputeOnly && !env.supervisorToken) {
+if (isProduction && !env.localRuntimeEnabled && !env.supervisorToken) {
   throw new Error('SUPERVISOR_AGENT_TOKEN must be configured in production');
 }

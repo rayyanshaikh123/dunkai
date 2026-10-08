@@ -8,6 +8,7 @@ const boardArtifactSchema = new mongoose.Schema({
   chat: { type: mongoose.Schema.Types.ObjectId, ref: 'Chat', default: null },
   urls: { type: mongoose.Schema.Types.Mixed, required: true },
   stats: { type: mongoose.Schema.Types.Mixed, default: {} },
+  files: { type: mongoose.Schema.Types.Mixed, default: {} },
 }, { timestamps: true });
 
 export const BoardArtifact = mongoose.model('BoardArtifact', boardArtifactSchema);

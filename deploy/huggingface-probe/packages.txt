@@ -1,0 +1,3 @@
+bubblewrap
+nodejs
+npm

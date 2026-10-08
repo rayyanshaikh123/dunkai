@@ -184,7 +184,7 @@ test('DNS recovery defaults to development only and allows an explicit override'
     const result = spawnSync(process.execPath, ['--input-type=module', '-e', "import {env} from './src/config/env.js';console.log(env.mongoDnsFallback)"], {
       cwd: new URL('..', import.meta.url), encoding: 'utf8', timeout: 10000,
       env: { ...process.env, DOTENV_CONFIG_PATH: '.dunkai-dns-test-no-env', NODE_ENV: environment, MONGODB_DNS_FALLBACK: override,
-        BROWSER_COMPUTE_ONLY: 'true', JWT_ACCESS_SECRET: 'test-access-secret', JWT_REFRESH_SECRET: 'test-refresh-secret', BYOK_ENCRYPTION_KEY: 'test-key' },
+        LOCAL_RUNTIME_ENABLED: 'true', JWT_ACCESS_SECRET: 'test-access-secret', JWT_REFRESH_SECRET: 'test-refresh-secret', BYOK_ENCRYPTION_KEY: 'test-key' },
     });
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stdout.trim(), String(expected));

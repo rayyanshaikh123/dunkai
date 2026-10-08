@@ -24,7 +24,7 @@ WORKDIR /srv
 COPY ai_engine/requirement.txt ai_engine/requirement.txt
 RUN pip install --extra-index-url https://download.pytorch.org/whl/cpu -r ai_engine/requirement.txt
 
-COPY dunkai-designer/package.json dunkai-designer/package-lock.json dunkai-designer/
+COPY dunkai-designer/package.json dunkai-designer/package-lock.json dunkai-designer/.npmrc dunkai-designer/
 RUN cd dunkai-designer && npm ci --omit=dev && npm cache clean --force
 
 COPY dunkai-designer dunkai-designer

@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
 import { useRouter } from 'next/navigation'
@@ -12,7 +12,6 @@ import {
   Bell,
   Settings,
   MoreVertical,
-  Download,
 } from 'lucide-react'
 import {
   DropdownMenu,
@@ -34,17 +33,6 @@ export function TopBar() {
   const { data: unread } = useUnreadCount()
   const router = useRouter()
   const [showNotifications, setShowNotifications] = useState(false)
-  const [exporting, setExporting] = useState(false)
-  const exportAbort = useRef<AbortController | null>(null)
-  useEffect(() => () => exportAbort.current?.abort(), [activeProjectId])
-  const exportProject = async () => {
-    const output=useWorkspaceStore.getState().aiOutput
-    if(!output || exporting)return
-    const controller=new AbortController();exportAbort.current=controller;setExporting(true)
-    try { await (await import('@/lib/browser-pipeline/export-project')).exportBrowserProject(output,controller.signal) }
-    catch(error){toast.error(error instanceof Error?error.message:'Project export failed')}
-    finally{exportAbort.current=null;setExporting(false)}
-  }
 
   const projects = data?.items || []
   const activeProject = projects.find((p) => p._id === activeProjectId)
@@ -74,7 +62,6 @@ export function TopBar() {
       {/* Right: Actions */}
       <div className="flex items-center gap-2 ml-auto">
         <ThemeToggle />
-        {process.env.NEXT_PUBLIC_BROWSER_COMPUTE_ONLY === 'true' && activeProjectId && <Button variant="ghost" size="icon" onClick={exportProject} disabled={exporting} aria-label="Download project archive" title="Download project review archive"><Download className="w-4 h-4" /></Button>}
 
         {/* Share */}
         <Button

@@ -22,6 +22,11 @@ const start = async () => {
     // Initialize Socket.io
     const io = initSocket(server);
     app.set('io', io);
+    if (env.localRuntimeEnabled) {
+      const { reconcileRuntimeJobs } = await import('./services/runtime.service.js');
+      setInterval(() => reconcileRuntimeJobs(io).catch((error) => console.error('Runtime recovery failed:', error.message)), 30_000).unref();
+      await reconcileRuntimeJobs(io);
+    }
 
     // Socket.io and the SSE relay hold connections open for minutes; keep the
     // HTTP server from closing idle keep-alive sockets under a proxy first.

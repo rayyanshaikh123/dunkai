@@ -4,9 +4,6 @@ import { create } from 'zustand'
 export interface BoardArtifact {
   design_name: string | null
   out_dir: string
-  /** Browser previews are never manufacturing approval. */
-  execution?: 'browser' | 'server'
-  verified?: boolean
   urls: {
     circuitJson?: string
     schematicSvg?: string

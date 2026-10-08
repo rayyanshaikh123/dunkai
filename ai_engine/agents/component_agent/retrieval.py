@@ -16,7 +16,6 @@ import curated_taxonomy
 
 from config import (
     DATASET_DF,
-    EMBEDDINGS,
     FAISS_INDEX,
     MODEL_NAME,
     DEVICE,
@@ -52,7 +51,6 @@ class ComponentRetriever:
         # These are already loaded once in config.py at import time —
         # no disk/network access happens here anymore.
         self.dataset = DATASET_DF
-        self.embeddings = EMBEDDINGS
         self.index = FAISS_INDEX
 
         self.model = self._load_embedding_model()
@@ -153,7 +151,7 @@ class ComponentRetriever:
             )
             return (
                 [],
-                np.zeros((0, self.embeddings.shape[1]), dtype=np.float32),
+                np.zeros((0, self.index.d), dtype=np.float32),
                 np.zeros((0,), dtype=np.int64),
             )
 

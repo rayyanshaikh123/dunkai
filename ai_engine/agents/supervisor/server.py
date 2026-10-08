@@ -74,7 +74,7 @@ app = FastAPI(title="dunkai Supervisor Agent", version="1.0.0")
 _SUPERVISOR_TOKEN = os.getenv("SUPERVISOR_AGENT_TOKEN", "")
 
 
-def require_backend(authorization: str | None = Header(default=None)) -> None:
+def require_backend(authorization: str | None = Header(default=None), x_supervisor_token: str | None = Header(default=None)) -> None:
     """Reject callers that are not the Node backend.
 
     The backend has always sent ``Authorization: Bearer $SUPERVISOR_AGENT_TOKEN``,
@@ -85,7 +85,9 @@ def require_backend(authorization: str | None = Header(default=None)) -> None:
     """
     if not _SUPERVISOR_TOKEN:
         return
-    presented = (authorization or "").removeprefix("Bearer ").strip()
+    # A private Hugging Face Space consumes Authorization at its edge. Node
+    # then carries our separate application credential in this header.
+    presented = x_supervisor_token if x_supervisor_token is not None else (authorization or "").removeprefix("Bearer ").strip()
     if not hmac.compare_digest(presented.encode(), _SUPERVISOR_TOKEN.encode()):
         raise HTTPException(status_code=401, detail="Invalid supervisor token")
 

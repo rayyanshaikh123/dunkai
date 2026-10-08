@@ -8,6 +8,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
 COPY src ./src
+COPY public ./public
 
 # Uploaded files and generated boards. Mount a volume here: container disks
 # are wiped on redeploy.

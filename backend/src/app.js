@@ -25,6 +25,7 @@ import { accountRoutes } from './routes/account.routes.js';
 import { billingRoutes } from './routes/billing.routes.js';
 import { webhook as stripeWebhook } from './controllers/billing.controller.js';
 import { firmwareRoutes } from './routes/firmware.routes.js';
+import { runtimeRoutes } from './routes/runtime.routes.js';
 import { openapi } from './docs/openapi.js';
 
 export const app = express();
@@ -82,6 +83,7 @@ app.use('/api/v1/notifications', notificationRoutes);
 app.use('/api/v1/account', accountRoutes);
 app.use('/api/v1/billing', billingRoutes);
 app.use('/api/v1/firmware', firmwareRoutes);
+app.use('/api/v1/runtime', runtimeRoutes);
 
 // ---- Error handling ----
 app.use(notFound);

@@ -11,9 +11,7 @@ export const CREDIT_PACKS = Object.freeze({
 });
 
 export const creditQuote = ({ action, byok = false }) => {
-  // Browser design work is local. A hosted model request is the only metered
-  // operation on this route; BYOK pays Groq directly through the user's key.
-  if (action === 'browser_inference') return { credits: byok ? 0 : 2, kind: 'chat' };
+  if (action === 'local_inference') return { credits: byok ? 0 : 2, kind: 'chat' };
   if (action === 'generate_board') return { credits: byok ? 20 : 101, kind: 'board' };
   if (action === 'chat' || action === 'code-chat') return { credits: byok ? 0 : 2, kind: 'chat' };
   if (action === 'run_workflow') return { credits: byok ? 10 : 30, kind: 'pipeline' };

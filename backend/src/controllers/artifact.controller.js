@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import mongoose from 'mongoose';
 import path from 'node:path';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { ApiError } from '../utils/ApiError.js';
@@ -34,6 +35,15 @@ export const boardArtifact = asyncHandler(async (req, res, next) => {
     throw ApiError.forbidden('Fabrication export is blocked pending independent checks and approval');
   }
   setPrivateHeaders(res, relative);
+  const kind = Object.keys(record.urls || {}).find((key) => record.urls[key] === url);
+  if (kind && record.files?.[kind]?.id) {
+    const bucket = new mongoose.mongo.GridFSBucket(mongoose.connection.db, { bucketName: 'runtimeArtifacts' });
+    const filename = relative.split('/').at(-1);
+    res.type(filename.endsWith('.svg') ? 'image/svg+xml' : filename.endsWith('.glb') ? 'model/gltf-binary' : filename.endsWith('.json') ? 'application/json' : filename.endsWith('.csv') ? 'text/csv' : 'text/plain');
+    const stream = bucket.openDownloadStream(new mongoose.Types.ObjectId(String(record.files[kind].id)));
+    stream.on('error', () => { if (!res.headersSent) res.status(404).end(); else res.destroy(); });
+    return stream.pipe(res);
+  }
   const root = path.resolve(env.uploadDir, 'boards');
   const local = path.resolve(root, relative);
   if (!local.startsWith(`${root}${path.sep}`)) throw ApiError.notFound('Board artifact not found');

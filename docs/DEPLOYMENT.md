@@ -1,5 +1,9 @@
 # Deploying Dunk AI
 
+For the current local AI-engine approach, use [LOCAL_RUNTIME.md](LOCAL_RUNTIME.md).
+The dedicated-engine instructions below remain available for development with
+`LOCAL_RUNTIME_ENABLED=false`.
+
 Three services and a database:
 
 | Service | Runtime | Needs |

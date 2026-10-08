@@ -36,9 +36,8 @@ export const getOrCreateWallet = async (user) => {
       const wallet = await Wallet.findOne({ user: user._id }).session(session);
       if (wallet.trialGranted) return;
       wallet.trialGranted = true;
-      // Browser mode's free offer is five hosted model turns per month.
-      // The legacy 150-credit project trial would silently add 75 more turns.
-      const grant = env.browserComputeOnly ? 0 : TRIAL_CREDITS;
+      // Local CPU work is free; five hosted model calls are the free offer.
+      const grant = env.localRuntimeEnabled ? 0 : TRIAL_CREDITS;
       wallet.trialAvailable += grant;
       await wallet.save({ session });
       if (grant) {
@@ -72,6 +71,7 @@ export const walletSummary = async (user) => {
 /** Reserve the published maximum before allowing any hosted or BYOK work. */
 export const reserveCharge = async (user, jobId, { action, byok = false }) => {
   if (!env.creditMeteringEnabled) return null;
+  if (env.localRuntimeEnabled && action !== 'local_inference') return null;
   const { credits, kind } = creditQuote({ action, byok });
   const period = currentCreditPeriod();
   await getOrCreateWallet(user);
@@ -130,7 +130,7 @@ export const settleCharge = async (jobId, result) => {
     const charge = await AiCharge.findOne({ jobId }).session(session);
     if (!charge || charge.status !== 'reserved') return;
 
-    const failed = !result || Boolean(result.error) || result.workflow_status === 'blocked';
+    const failed = !result || Boolean(result.error) || ['blocked', 'failed'].includes(result.workflow_status);
     const askedQuestion = result?.interview_status === 'question';
     if (!failed && askedQuestion && charge.kind === 'pipeline' && !charge.byok && !charge.freeChat) {
       const owner = await User.findById(charge.user).select('isVerified').session(session);

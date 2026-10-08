@@ -118,6 +118,8 @@ export const initSocket = (httpServer) => {
       socket.join(`job:${jobId}`);
       if (job.status === 'completed') socket.emit('ai:complete', { jobId, result: { jobId, data: job.result, status: 'completed' } });
       if (job.status === 'failed') socket.emit('ai:error', { jobId, error: { error: job.error || 'Job failed' } });
+      if (job.status === 'cancelled') socket.emit('ai:error', { jobId, error: { error: job.error || 'Job cancelled' } });
+      if (job.status === 'running' && job.progress) socket.emit('ai:progress', { ...job.progress, jobId });
     });
 
     socket.on('ai:unsubscribe', (jobId) => {

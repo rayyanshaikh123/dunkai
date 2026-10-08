@@ -23,6 +23,7 @@ ai_engine/venv/
 ai_engine/.hf-cache/
 ai_engine/__pycache__/
 ai_engine/**/*.pyc
+deploy/**/__pycache__/
 .pytest_cache/
 
 # OS and editor files

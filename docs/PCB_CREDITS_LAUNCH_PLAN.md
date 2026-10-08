@@ -1,6 +1,6 @@
 # PCB, credits, security, and hosting launch plan
 
-> The audit and cloud cost model below are the historical baseline. The implemented website runtime now runs deterministic computation on every visitor's device and uses the existing Node API plus Atlas. Current limits, freemium pricing (five model requests; two credits per additional request), test evidence and deployment settings are in [BROWSER_COMPUTE_PLAN.md](BROWSER_COMPUTE_PLAN.md) and [LAUNCH_RUNBOOK.md](LAUNCH_RUNBOOK.md). `render.yaml` is now Node-only; the paid legacy blueprint is `render.cloud.yaml`.
+> The audit and dedicated-engine costs below are historical. The current user-approved approach runs the original engine in a paired local runtime. See [LOCAL_RUNTIME.md](LOCAL_RUNTIME.md) for the active architecture, pricing, limits and deployment settings. `render.yaml` provisions only the free Node API.
 
 Status: implementation in progress, 4 October 2026. The historical findings and cost examples below remain the original planning baseline. See [the launch runbook](LAUNCH_RUNBOOK.md) for the current release gates. Billing is disabled in `render.yaml` until the external checks are complete.
 

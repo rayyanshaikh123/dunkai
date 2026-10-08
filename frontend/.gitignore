@@ -5,11 +5,7 @@
 
 # next.js
 /.next/
-/public/vendor/tscircuit-eval-worker.js
-/public/vendor/avr/
 /out/
-/test-results/
-/playwright-report/
 
 # production
 /build
@@ -19,6 +15,8 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
+test-results/
+playwright-report/
 
 # env files
 .env*

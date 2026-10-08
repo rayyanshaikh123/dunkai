@@ -9,7 +9,6 @@ import { v4 as uuidv4 } from 'uuid';
 import { resolveCredentials } from './apiKey.service.js';
 import { reserveCharge, settleCharge } from './credits.service.js';
 import { env } from '../config/env.js';
-import { BrowserBoard } from '../models/BrowserBoard.js';
 
 // ---- Get a chat owned by the user ----
 
@@ -84,27 +83,20 @@ export const getMessages = async (chatId, user, query = {}) => {
 
 // ---- Save message directly without triggering supervisor AI ----
 
-export const saveMessage = async (chatId, { type = 'user', content, metadata = {}, options = [], clientMessageId }, user) => {
+export const saveMessage = async (chatId, { type = 'user', content, metadata = {}, options = [] }, user) => {
   const chat = await getOwnedChat(chatId, user);
-  if (!['user', 'assistant'].includes(type) || typeof content !== 'string' || !content.trim() || content.length > 20000) throw ApiError.badRequest('Invalid chat message');
-  if (clientMessageId !== undefined && (typeof clientMessageId !== 'string' || !/^[A-Za-z0-9:_-]{1,120}$/.test(clientMessageId))) throw ApiError.badRequest('Invalid client message ID');
-  if (!Array.isArray(options) || options.length > 8 || options.some((option) => typeof option !== 'string' || option.length > 240) || JSON.stringify(metadata).length > 50000) throw ApiError.badRequest('Invalid message metadata');
-  let message;
-  try { message = await Message.create({
+
+  const message = await Message.create({
     chat: chat._id,
     sender: type === 'user' ? user._id : undefined,
     type,
     content,
-    ...(clientMessageId ? { clientMessageId } : {}),
     metadata: { ...metadata, options },
-  }); } catch (error) {
-    if (!clientMessageId || error?.code !== 11000) throw error;
-    const saved = await Message.findOne({ chat: chat._id, clientMessageId });
-    if (!saved || saved.type !== type || saved.content !== content) throw ApiError.conflict('Client message ID already used');
-    return saved;
-  }
+  });
 
-  await Chat.updateOne({ _id: chat._id }, { $inc: { messageCount: 1 }, $set: { lastMessageAt: new Date() } });
+  chat.messageCount += 1;
+  chat.lastMessageAt = new Date();
+  await chat.save();
 
   return message;
 };
@@ -112,10 +104,9 @@ export const saveMessage = async (chatId, { type = 'user', content, metadata = {
 // ---- Send message (stores user message, calls supervisor, stores assistant reply) ----
 
 export const sendMessage = async (chatId, { content, attachments = [], agentType }, user, req = null) => {
-  if (env.browserComputeOnly) throw new ApiError(503, 'The Python chat engine is disabled; use browser computation');
   const chat = await getOwnedChat(chatId, user);
   const jobId = uuidv4();
-  const credentials = await resolveCredentials(user._id);
+  const credentials = env.localRuntimeEnabled ? {} : await resolveCredentials(user._id);
   await reserveCharge(user, jobId, { action: 'chat', byok: Boolean(credentials.groq) });
 
   // Store user message
@@ -146,7 +137,7 @@ export const sendMessage = async (chatId, { content, attachments = [], agentType
   try {
     result = await callSupervisor({
       action: 'chat',
-      project: chat.project,
+      project: { ...(await getProject(chat.project, user, true)).toObject(), ...chat.toObject(), _id: chat.project },
       messages: [...priorMessages].map((m) => ({ type: m.type, content: m.content })),
       files: attachments,
       credentials,
@@ -194,33 +185,14 @@ export const renameChat = async (id, title, user) => {
 // ---- Update this chat's pipeline artifacts (requirements/architecture/etc) ----
 
 export const updateArtifacts = async (id, data, user) => {
-  if (env.billingEnabled && !env.browserComputeOnly) throw ApiError.forbidden('Design artifacts are saved by the server after each run');
-  if (!data || typeof data !== 'object' || Array.isArray(data)) throw ApiError.badRequest('Design artifacts must be an object');
-  if (env.browserComputeOnly) {
-    if (Object.hasOwn(data, 'board') || Object.hasOwn(data, 'validation')) {
-      throw ApiError.forbidden('Browser clients cannot assert a verified board or manufacturing validation');
-    }
-    if (JSON.stringify(data).length > 200_000) throw ApiError.badRequest('Browser design artifacts are too large');
-  }
+  if (env.billingEnabled) throw ApiError.forbidden('Design artifacts are saved by the server after each run');
   const chat = await getOwnedChat(id, user);
-  // Component corrections invalidate previews and compiled firmware for the
-  // old pin mapping. Only the server may clear the saved board assertion.
-  const changedIr = env.browserComputeOnly && data.pcb_ir !== undefined && JSON.stringify(chat.pcb_ir) !== JSON.stringify(data.pcb_ir);
   for (const key of ARTIFACT_KEYS) {
     if (data[key] === undefined) continue;
     chat[key] = data[key];
     chat.markModified(key);
   }
-  if (changedIr) {
-    chat.board = {}; chat.markModified('board');
-    if (data.code_generation === undefined) { chat.code_generation = {}; chat.markModified('code_generation'); }
-  }
-  if(changedIr){
-    await Chat.db.transaction(async(session)=>{
-      await chat.save({session});
-      await BrowserBoard.deleteMany({chat:chat._id,user:user._id}).session(session);
-    });
-  }else await chat.save();
+  await chat.save();
   return chat;
 };
 
@@ -229,8 +201,9 @@ export const updateArtifacts = async (id, data, user) => {
 export const deleteChat = async (id, user) => {
   const chat = await getOwnedChat(id, user);
   await chat.deleteOne();
+  const { deleteRuntimeArtifacts } = await import('./runtimeStorage.service.js');
+  await deleteRuntimeArtifacts({ chat: chat._id });
   await Message.deleteMany({ chat: id });
-  await BrowserBoard.deleteMany({ chat: id, user: user._id });
   return chat;
 };
 

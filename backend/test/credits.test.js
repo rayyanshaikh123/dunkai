@@ -7,10 +7,6 @@ import { Wallet } from '../src/models/Wallet.js';
 import { Payment } from '../src/models/Payment.js';
 import { CreditEntry } from '../src/models/CreditEntry.js';
 import { AiCharge } from '../src/models/AiCharge.js';
-import { BrowserBoard } from '../src/models/BrowserBoard.js';
-import { Chat } from '../src/models/Chat.js';
-import { Project } from '../src/models/Project.js';
-import { getBrowserBoardFile, saveBrowserBoard } from '../src/services/browserBoard.service.js';
 import { File } from '../src/models/File.js';
 import { getFile } from '../src/services/file.service.js';
 import { getOrCreateWallet, reserveCharge, settleCharge, walletSummary } from '../src/services/credits.service.js';
@@ -62,32 +58,6 @@ test('file metadata is private to its owner without a shared project', async () 
   });
   assert.equal(String((await getFile(file._id, user))._id), String(file._id));
   await assert.rejects(getFile(file._id, outsider), /private/i);
-});
-
-test('browser PCB previews are saved for the owning chat and reject stale handoffs', async () => {
-  const project = await Project.create({ owner: user._id, title: 'Local PCB' });
-  const ir = {
-    components: [
-      { ref_id: 'R1', part_class: 'resistor', value: '1k', package: '0402' },
-      { ref_id: 'R2', part_class: 'resistor', value: '1k', package: '0402' },
-    ],
-    nets: [{ name: 'SIGNAL', connections: ['R1.2', 'R2.1'] }],
-    constraints: { board_outline: { width_mm: 30, height_mm: 20 } },
-  };
-  const chat = await Chat.create({ user: user._id, project: project._id, pcb_ir: ir });
-  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="30" height="20"></svg>';
-  const payload = { sourceIr: ir, pcbSvg: svg, schematicSvg: svg, circuitJson: [
-    { type: 'source_component', name: 'R1' }, { type: 'pcb_trace' },
-  ] };
-  const saved = await saveBrowserBoard(chat._id, user, payload);
-  assert.equal(saved.execution, 'browser');
-  assert.equal(saved.verified, false);
-  assert.equal(saved.stats.traces, 1);
-  assert.equal((await getBrowserBoardFile(chat._id, user, 'pcb')).data, svg);
-  await assert.rejects(saveBrowserBoard(chat._id, user, { ...payload, sourceIr: { components: [] } }), /changed/);
-  const outsider = await User.create({ name: 'Browser Outsider', email: 'browser-outsider@example.com' });
-  await assert.rejects(getBrowserBoardFile(chat._id, outsider, 'pcb'), /not found/i);
-  assert.equal(await BrowserBoard.countDocuments({ chat: chat._id }), 1);
 });
 
 test('trial credits require a valid unexpired email verification token', async () => {

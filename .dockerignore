@@ -7,6 +7,7 @@
 **/*.pyc
 **/.env
 **/.env.*
+**/runtime.env
 !**/.env.example
 backend/uploads
 dunkai-designer/build

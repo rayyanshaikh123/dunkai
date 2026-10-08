@@ -1,6 +1,9 @@
-# DunkAI Local Runtime — Superseded Plan
+# DunkAI Local Runtime — active approach
 
-This document describes the earlier installable-companion approach. The user has since specified a website-only experience: a confirmation in the page starts computation in the browser, with no installer or separate runtime. The current plan is [docs/BROWSER_COMPUTE_PLAN.md](docs/BROWSER_COMPUTE_PLAN.md). Do not implement the companion, CLI, or device-auth phases below for the browser-first product.
+The latest user request restores the original Python engine on each user's
+computer and removes the browser port. Implementation and setup are described
+in [docs/LOCAL_RUNTIME.md](docs/LOCAL_RUNTIME.md). The plan below is historical
+context; actual supported transport and security controls are in that runbook.
 
 ## 1. Goal
 

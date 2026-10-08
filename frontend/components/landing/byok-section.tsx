@@ -1,20 +1,30 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { BadgeCheck, EyeOff, Coins, Lock } from "lucide-react";
+import { billingApi } from "@/lib/api";
 
 const PROVIDERS = [
-  { name: "Groq", use: "Design chat and all six agents", color: "#f55036" },
-  { name: "Google Gemini", use: "Board generation", color: "#4f8cff" },
-  { name: "Anthropic", use: "Claude board generation", color: "#d97757" },
+  { name: "Groq", use: "Original design agents and PCB generation", color: "#f55036" },
 ];
-
-const PROMISES = [
-  { icon: BadgeCheck, title: "Verified on save", body: "We make one read-only call to the provider, so a typo fails now, not three minutes into a run." },
-  { icon: Lock, title: "Encrypted at rest", body: "AES-256-GCM, decrypted only for the request that uses it, and only on our servers." },
-  { icon: EyeOff, title: "Never sent back", body: "Your browser only ever sees the last four characters. Remove a key any time." },
-  { icon: Coins, title: "Compute only", body: "Your key pays the model provider. Pipeline and board compute use fewer DunkAI credits." },
+const LOCAL_PROMISES = [
+  { icon: BadgeCheck, title: "Your provider account", body: "Models run remotely on Groq using your account's allowance and rate limits." },
+  { icon: Lock, title: "Stored on your computer", body: "Your BYOK key stays in your local runtime configuration." },
+  { icon: EyeOff, title: "No key uploads", body: "BYOK requests go directly from your computer to Groq." },
+  { icon: Coins, title: "Free local compute", body: "Local orchestration and PCB generation use zero DunkAI credits." },
+];
+const HOSTED_PROMISES = [
+  { icon: BadgeCheck, title: "Your provider account", body: "Your provider bills its model usage to your account." },
+  { icon: Lock, title: "Encrypted storage", body: "Saved provider keys are encrypted by the backend." },
+  { icon: EyeOff, title: "Authorized jobs", body: "Keys are passed securely to the engine for your authenticated requests." },
+  { icon: Coins, title: "Separate compute costs", body: "BYOK avoids hosted model charges. Published server computation credits still apply." },
 ];
 
 export function ByokSection() {
+  const [local, setLocal] = useState<boolean | null>(null);
+  useEffect(() => { billingApi.plans().then((plans) => setLocal(plans.localRuntimeEnabled)).catch(() => {}) }, []);
+  const promises = local ? LOCAL_PROMISES : HOSTED_PROMISES;
   return (
     <section id="byok" className="relative py-24 sm:py-32">
       <div className="mx-auto max-w-6xl px-4 sm:px-6">
@@ -28,7 +38,9 @@ export function ByokSection() {
                 <span className="text-soft">Your model bill.</span>
               </h2>
               <p className="mt-4 max-w-md text-lg text-muted-foreground">
-                Add your own provider key to pay that provider directly. DunkAI charges only the disclosed compute credits for pipeline and board jobs.
+                {local === true ? "Set your Groq key in the local runtime to pay your provider directly. Your computer runs the design agents and PCB generator for zero DunkAI credits."
+                  : local === false ? "Add your Groq key in Settings to use your provider account. The hosted engine runs the design agents and PCB generator, so your computer only needs the website."
+                  : "Use your own provider account for supported design jobs. Settings shows the available providers and computation pricing."}
               </p>
 
               <ul className="mt-8 space-y-3">
@@ -47,12 +59,12 @@ export function ByokSection() {
                 href="/settings"
                 className="mt-8 inline-flex items-center rounded-full bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground hover:opacity-90"
               >
-                Add a key in Settings
+                {local ? "Connect your computer in Settings" : "Manage API keys in Settings"}
               </Link>
             </div>
 
             <div className="page-wash grid gap-3 p-6 sm:grid-cols-2 sm:p-10">
-              {PROMISES.map(({ icon: Icon, title, body }) => (
+              {promises.map(({ icon: Icon, title, body }) => (
                 <div key={title} className="glass rounded-3xl p-5">
                   <Icon className="h-5 w-5 text-[var(--brand-1)]" />
                   <h3 className="mt-4 font-semibold">{title}</h3>

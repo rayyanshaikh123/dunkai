@@ -1,0 +1,57 @@
+name: Local runtime
+on: [push, pull_request]
+jobs:
+  spaces-prerequisites:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: python -m unittest discover -s deploy/huggingface-probe -p test_readiness.py
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: npm, cache-dependency-path: backend/package-lock.json }
+      - run: npm ci
+        working-directory: backend
+      - run: npm run test:runtime && npm run test:credit-config && npm run test:database-dns
+        working-directory: backend
+      - run: npm run package:runtime
+        working-directory: backend
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: npm, cache-dependency-path: frontend/package-lock.json }
+      - run: npm ci
+        working-directory: frontend
+      - run: npm run build
+        working-directory: frontend
+      - run: npx playwright install --with-deps chromium
+        working-directory: frontend
+      - run: npm run test:e2e -- --project=chromium
+        working-directory: frontend
+  companion:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - run: npm test
+        working-directory: runtime
+      - run: docker build -f runtime/Dockerfile -t dunkai-runtime:ci .
+      - run: >-
+          docker run --rm --cap-drop=ALL --security-opt=no-new-privileges
+          --mount type=bind,source=${{ github.workspace }}/ai_engine/agents/component_agent/test_resource_loading.py,target=/srv/ai_engine/agents/component_agent/test_resource_loading.py,readonly
+          dunkai-runtime:ci python -m unittest discover
+          -s agents/component_agent -p test_resource_loading.py
+      - run: >-
+          docker run --rm --cap-drop=ALL --security-opt=no-new-privileges
+          --security-opt=seccomp=unconfined --security-opt=systempaths=unconfined
+          --security-opt=apparmor=unconfined dunkai-runtime:ci
+          bwrap --unshare-all --die-with-parent --ro-bind /usr /usr
+          --ro-bind /lib /lib --symlink usr/lib64 /lib64
+          --symlink usr/bin /bin --proc /proc --dev /dev -- /usr/bin/true

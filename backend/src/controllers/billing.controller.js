@@ -28,10 +28,10 @@ export const entries = asyncHandler(async (req, res) => {
 });
 
 export const quote = asyncHandler(async (req, res) => {
-  if (env.browserComputeOnly && req.query.action !== 'browser_inference') {
-    throw ApiError.badRequest('Only browser inference is billable in browser computation mode');
-  }
-  send(res, { data: creditQuote({ action: req.query.action, byok: req.query.byok === 'true' }) });
+  const action = req.query.action, byok = req.query.byok === 'true';
+  send(res, { data: env.localRuntimeEnabled && action !== 'local_inference'
+    ? { credits: 0, kind: 'local_compute', inferenceCreditsPerCall: byok ? 0 : 2 }
+    : creditQuote({ action, byok }) });
 });
 
 export const checkout = asyncHandler(async (req, res) => {

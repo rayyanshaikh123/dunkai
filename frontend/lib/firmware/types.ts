@@ -43,7 +43,7 @@ export interface FirmwareBuild {
   summary: string[]
   log: string
   skipped: string[]
-  download: { filename: string; size: number; url?: string }
+  download: { filename: string; size: number }
   images: FirmwareImage[]
 }
 

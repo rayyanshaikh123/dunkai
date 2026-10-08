@@ -11,9 +11,7 @@ os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 os.environ.setdefault("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES")
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 
-import io
 import requests
-import numpy as np
 import pandas as pd
 import faiss
 import torch
@@ -44,8 +42,12 @@ def _get_file_path(filename: str) -> Path:
     file_path = CACHE_DIR / filename
     if not file_path.exists():
         print(f"[FAISS Cache] Downloading prebuilt {filename} from Hugging Face...")
-        url = hf_hub_url(repo_id=HF_REPO_ID, filename=filename, repo_type=HF_REPO_TYPE)
-        resp = requests.get(url, headers=_HEADERS, stream=True)
+        # The desktop runtime downloads through its authenticated loopback
+        # proxy. The original engine and catalogue stay unchanged; the operator
+        # Hugging Face token remains on the hosted backend.
+        dataset_base = os.environ.get("DUNKAI_DATASET_BASE_URL", "").rstrip("/")
+        url = (dataset_base + "/" + filename) if dataset_base else hf_hub_url(repo_id=HF_REPO_ID, filename=filename, repo_type=HF_REPO_TYPE)
+        resp = requests.get(url, headers={} if dataset_base else _HEADERS, stream=True, timeout=(15, 300))
         resp.raise_for_status()
         temp_path = file_path.with_suffix(file_path.suffix + ".tmp")
         with open(temp_path, "wb") as f:
@@ -65,11 +67,11 @@ def _get_file_path(filename: str) -> Path:
 _parquet_path = _get_file_path("components_ml.parquet")
 DATASET_DF = pd.read_parquet(_parquet_path)
 
-_embeddings_path = _get_file_path("component_embeddings.npy")
-EMBEDDINGS = np.load(_embeddings_path)
-
 _index_path = _get_file_path("component_faiss.index")
 FAISS_INDEX = faiss.read_index(str(_index_path))
+# The FAISS index already contains every catalogue vector. Retrieval searches
+# that index directly; loading component_embeddings.npy kept a second ~719 MiB
+# copy in RAM and downloaded an unused file. Read the dimension from the index.
 
 # =============================================================================
 # Embedding Model
@@ -77,7 +79,7 @@ FAISS_INDEX = faiss.read_index(str(_index_path))
 
 MODEL_NAME = "BAAI/bge-small-en-v1.5"
 
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+DEVICE = os.environ.get("DUNKAI_EMBEDDING_DEVICE") or ("cuda" if torch.cuda.is_available() else "cpu")
 
 # =============================================================================
 # Retrieval
@@ -131,11 +133,11 @@ if VERBOSE:
     print("CircuitMind Component Agent")
     print("=" * 60)
 
-    print(f"HF Repo: {HF_REPO_ID} (in-memory, no local cache)")
+    print(f"HF Repo: {HF_REPO_ID} (local disk cache)")
 
     print(f"\nDataset rows: {len(DATASET_DF)}")
 
-    print(f"\nEmbeddings shape: {EMBEDDINGS.shape}")
+    print(f"\nVector dimensions: {FAISS_INDEX.d}")
 
     print(f"\nFAISS vectors: {FAISS_INDEX.ntotal}")
 

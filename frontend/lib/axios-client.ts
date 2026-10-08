@@ -50,7 +50,7 @@ const processQueue = (error: unknown) => {
 }
 
 api.interceptors.response.use(
-  (response) => response.data.data,
+  (response) => response.config.responseType === 'blob' ? response.data : response.data.data,
   async (error) => {
     const originalRequest = error.config
 

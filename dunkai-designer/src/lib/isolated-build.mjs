@@ -13,11 +13,14 @@ export async function buildOutputsIsolated(workdir, opts = {}) {
   const sandbox = [
     '--die-with-parent', '--unshare-all', '--new-session',
     '--ro-bind', '/usr', '/usr', '--ro-bind-try', '/lib', '/lib', '--ro-bind-try', '/lib64', '/lib64',
+    // Gradio Spaces installs Node under the unprivileged app user's directory.
+    // Bind only its executable when it is outside the already mounted /usr.
+    ...(!process.execPath.startsWith('/usr/') ? ['--ro-bind', process.execPath, process.execPath] : []),
     '--dir', '/srv', '--ro-bind', root, root,
     '--dir', '/data', '--dir', '/data/boards', '--dir', workdir, '--bind', workdir, workdir,
     '--tmpfs', '/tmp', '--proc', '/proc', '--dev', '/dev',
     '--chdir', root, '--setenv', 'PATH', '/usr/local/bin:/usr/bin:/bin', '--setenv', 'HOME', '/tmp',
-    '/usr/local/bin/node', '--max-old-space-size=1024', worker, workdir,
+    process.execPath, '--max-old-space-size=1024', worker, workdir,
   ]
   const child = spawnSync('bwrap', sandbox, {
     cwd: root,

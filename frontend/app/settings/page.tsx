@@ -36,6 +36,7 @@ import {
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import { CREDIT_PACK_COPY } from '@/lib/plans'
+import { RuntimeSection } from '@/components/settings/runtime-section'
 
 const KEY_PLACEHOLDERS: Record<ByokProvider, string> = {
   groq: 'gsk_…',
@@ -98,17 +99,17 @@ function UsageCard() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <span className="rounded-full bg-primary px-3 py-1 text-xs font-medium text-primary-foreground">Prepaid credits</span>
-          <span className="text-xs text-muted-foreground">Free model requests for {period} (UTC)</span>
+          <span className="text-xs text-muted-foreground">Free chats for {period} (UTC)</span>
         </div>
         <Button variant="outline" size="sm" onClick={() => queryClient.invalidateQueries({ queryKey: ['billing', 'usage'] })}>Refresh balance</Button>
       </div>
 
-      {(meteringEnabled ?? billingEnabled) ? (
+      {meteringEnabled ? (
         <div className="space-y-5">
           <div className="grid gap-4 sm:grid-cols-3">
             <div className="rounded-2xl bg-secondary p-4"><p className="text-xs text-muted-foreground">Available credits</p><p className="mt-1 text-2xl font-semibold">{wallet.available}</p></div>
             <div className="rounded-2xl bg-secondary p-4"><p className="text-xs text-muted-foreground">Trial / paid</p><p className="mt-1 text-lg font-semibold">{wallet.trialAvailable} / {wallet.paidAvailable}</p></div>
-            <div className="rounded-2xl bg-secondary p-4"><p className="text-xs text-muted-foreground">Free hosted model requests</p><p className="mt-1 text-lg font-semibold">{wallet.freeChatsUsed} / {wallet.freeChatsLimit} used</p></div>
+            <div className="rounded-2xl bg-secondary p-4"><p className="text-xs text-muted-foreground">{plans.data?.localRuntimeEnabled ? 'Free hosted model calls' : 'Free hosted chats'}</p><p className="mt-1 text-lg font-semibold">{wallet.freeChatsUsed} / {wallet.freeChatsLimit} used</p></div>
           </div>
           <p className="text-sm text-muted-foreground">{wallet.reserved} credits reserved for running jobs. Credits are ₹1 of prepaid value and do not expire.</p>
           <div className="grid gap-3 sm:grid-cols-3">
@@ -119,7 +120,8 @@ function UsageCard() {
             ))}
           </div>
           {buyError && <p className="text-sm text-destructive">{buyError}</p>}
-          <p className="text-xs text-muted-foreground">{billingEnabled ? 'Payment confirmation updates your balance through Stripe; returning from checkout alone does not add credits.' : 'Credit purchases are currently closed. Your monthly free model requests and Groq BYOK remain available.'}</p>
+          {!billingEnabled && <p className="text-sm text-muted-foreground">Credit purchases are closed. Use the free model allowance or a BYOK runtime.</p>}
+          <p className="text-xs text-muted-foreground">Payment confirmation updates your balance through Stripe; returning from checkout alone does not add credits.</p>
         </div>
       ) : (
         <p className="rounded-2xl bg-secondary px-4 py-3 text-sm text-muted-foreground">
@@ -235,13 +237,12 @@ function KeyRow({ status }: { status: ApiKeyStatus }) {
 }
 
 function SettingsContent() {
-  const browserMode = process.env.NEXT_PUBLIC_BROWSER_COMPUTE_ONLY === 'true'
   const router = useRouter()
   const { theme, setTheme } = useTheme()
   const [mounted, setMounted] = useState(false)
 
-  const keys = useQuery({ queryKey: ['account', 'keys'], queryFn: accountApi.listKeys })
   const providers = useQuery({ queryKey: ['ai', 'providers'], queryFn: aiApi.providers })
+  const keys = useQuery({ queryKey: ['account', 'keys'], queryFn: accountApi.listKeys, enabled: Boolean(providers.data && !providers.data.localRuntimeEnabled) })
 
   // Hydrated in an effect: the stored choice only exists on the client, and
   // reading it during render would make the first paint disagree with the server's.
@@ -293,11 +294,15 @@ function SettingsContent() {
           <p className="mt-2 text-muted-foreground">Your credits, API keys, and how DunkAI looks.</p>
         </div>
 
-        <Section icon={Gauge} title="Credits & usage" description={browserMode ? 'Monthly free model requests and prepaid credits. Local computation uses no credits.' : 'Free hosted chats, prepaid credits, and compute charges for longer jobs.'}>
+        <Section icon={Gauge} title="Credits & usage" description="Free hosted chats, prepaid credits, and compute charges for longer jobs.">
           <UsageCard />
         </Section>
 
-        <Section
+        {providers.data?.localRuntimeEnabled && (
+          <Section icon={Laptop} title="This computer" description="Connect your computer to run the original design agents and PCB generator."><RuntimeSection /></Section>
+        )}
+
+        {!providers.data?.localRuntimeEnabled && <Section
           icon={KeyRound}
           title="Your API keys"
           description="Verified with the provider when you save, encrypted at rest, and never shown again in full."
@@ -305,8 +310,7 @@ function SettingsContent() {
           <div className="space-y-3">
             {keys.isLoading && <div className="h-28 animate-pulse rounded-2xl bg-secondary" />}
             {keys.isError && <p className="text-sm text-destructive">Could not load your keys. Try refreshing.</p>}
-            {keys.data?.filter((k) => !browserMode || k.provider === 'groq').map((k) => <KeyRow key={k.provider} status={k} />)}
-            {browserMode && keys.data?.some((k) => k.provider !== 'groq' && k.configured) && <details><summary className="cursor-pointer text-sm">Other saved keys (not used for browser design)</summary><div className="mt-3 space-y-3">{keys.data.filter((k) => k.provider !== 'groq' && k.configured).map((k) => <KeyRow key={k.provider} status={k} />)}</div></details>}
+            {keys.data?.map((k) => <KeyRow key={k.provider} status={k} />)}
           </div>
           {providers.data && (
             <p className="mt-4 text-sm text-muted-foreground">
@@ -317,11 +321,9 @@ function SettingsContent() {
               .
             </p>
           )}
-        </Section>
+        </Section>}
 
-        {browserMode ? <Section icon={CircuitBoard} title="Computation on your device" description="Groq provides the model; your device performs design computation.">
-          <p className="text-sm text-muted-foreground">Confirm a run in the workspace to use this device’s CPU and memory. Keep the tab open, or cancel and resume later on this device. PCB routing, supported firmware compilation and exports use no compute credits.</p>
-        </Section> : <Section
+        {!providers.data?.localRuntimeEnabled && <Section
           icon={CircuitBoard}
           title="Board generation model"
           description="Which model lays out the PCB once the pipeline hands off a design."

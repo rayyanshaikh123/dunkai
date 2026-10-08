@@ -1,11 +1,14 @@
 import { Readable } from 'node:stream';
+import { isDeepStrictEqual } from 'node:util';
 import { env } from '../config/env.js';
 import { ApiError } from '../utils/ApiError.js';
 
 /** Headers for every call to the Python supervisor. */
 const supervisorHeaders = (extra = {}) => ({
   ...extra,
-  ...(env.supervisorToken ? { authorization: `Bearer ${env.supervisorToken}` } : {}),
+  ...(env.supervisorHfToken
+    ? { authorization: `Bearer ${env.supervisorHfToken}`, 'x-supervisor-token': env.supervisorToken }
+    : env.supervisorToken ? { authorization: `Bearer ${env.supervisorToken}` } : {}),
 });
 
 const supervisorBase = /^https?:\/\//i.test(env.supervisorUrl) ? env.supervisorUrl : `http://${env.supervisorUrl}`;
@@ -15,9 +18,9 @@ const supervisorUrl = (suffix = '') => new URL(`${env.supervisorPath}${suffix}`,
 const jobStore = new Map();
 
 export const setJobStatus = (jobId, status, data = {}) => {
-  jobStore.set(jobId, { jobId, status, ...data, updatedAt: new Date() });
+  jobStore.set(jobId, { ...jobStore.get(jobId), jobId, status, ...data, updatedAt: new Date() });
   // Auto-cleanup after 1 hour
-  setTimeout(() => jobStore.delete(jobId), 60 * 60 * 1000);
+  setTimeout(() => jobStore.delete(jobId), 60 * 60 * 1000).unref();
 };
 
 export const getJobStatus = (jobId) => jobStore.get(jobId);
@@ -150,6 +153,11 @@ export const callSupervisor = async ({
   credentials = null,
   audit = {},
 }) => {
+  if (env.localRuntimeEnabled) {
+    const { executeLocalRequest } = await import('./runtime.service.js');
+    if (!audit.userId) throw ApiError.unauthorized('Local jobs require an authenticated user');
+    return executeLocalRequest({ userId: audit.userId, project, chatId: audit.chatId, action, messages, files, agentType, provider, model, jobId: jobId || undefined });
+  }
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 120000);
 
@@ -307,14 +315,16 @@ const parseSSEBuffer = (buffer) => {
  * screen. `{}` rather than null is the "untouched" value the rest of the
  * Mixed fields use.
  */
-const persistBoardState = async (project, chatId, result, audit, jobId) => {
-  const projectId = project?._id;
+export const persistBoardState = async (project, chatId, result, audit, jobId, signal = null) => {
+  const projectId = audit?.projectId || project?._id;
   if (!result || typeof result !== 'object') return;
   if (!chatId && !projectId) return;
 
-  const board = result.board;
-  const hasBoard = board && typeof board === 'object';
-  const componentsReplaced = Boolean(result.bom || result.pcb_ir);
+  let board = result.board;
+  let hasBoard = board && typeof board === 'object' && Object.keys(board).length > 0;
+  const componentsReplaced = Boolean((result.bom && !isDeepStrictEqual(result.bom, project?.bom)) || (result.pcb_ir && !isDeepStrictEqual(result.pcb_ir, project?.pcb_ir)));
+  const inheritedBoard = hasBoard && isDeepStrictEqual(board, project?.board);
+  if (inheritedBoard && componentsReplaced) { result.board = {}; board = null; hasBoard = false; }
   const artifactKeys = [
     'requirements', 'architecture', 'bom', 'eda_data', 'pcb_ir', 'validation',
     'handoff_validation', 'documentation', 'code_generation',
@@ -325,7 +335,15 @@ const persistBoardState = async (project, chatId, result, audit, jobId) => {
   if (!Object.keys(fields).length) return true;
 
   try {
-    if (hasBoard) {
+    if (hasBoard && !inheritedBoard) {
+      if (env.archiveSupervisorArtifacts) {
+        const { archiveSupervisorBoard } = await import('./supervisorArtifacts.service.js');
+        board = await archiveSupervisorBoard(board, { jobId, userId: audit?.userId, projectId, chatId }, (relative) => {
+          const encoded = relative.split('/').map(encodeURIComponent).join('/');
+          return fetch(supervisorUrl(`/artifacts/${encoded}`), { headers: supervisorHeaders(), redirect: 'error', signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(60_000)]) : AbortSignal.timeout(60_000) });
+        });
+        result.board = board; fields.board = board;
+      }
       const { BoardArtifact } = await import('../models/BoardArtifact.js');
       const firstUrl = Object.values(board.urls || {}).find((url) => typeof url === 'string' && url.startsWith('/uploads/boards/'));
       const directory = firstUrl?.split('/')[3];
@@ -387,7 +405,13 @@ export const callSupervisorStream = async (
     signal = null,
   }
 ) => {
-  setJobStatus(jobId, 'running');
+  if (env.localRuntimeEnabled) {
+    const { queueLocalJob } = await import('./runtime.service.js');
+    return queueLocalJob({ userId: audit.userId, project, chatId, action, messages, files, agentType, provider, model, jobId });
+  }
+  const controller = new AbortController();
+  const linkedSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+  setJobStatus(jobId, 'running', { controller });
 
   let response;
 
@@ -395,7 +419,7 @@ export const callSupervisorStream = async (
     response = await fetch(supervisorUrl('/stream'), {
       method: 'POST',
       headers: supervisorHeaders({ 'content-type': 'application/json' }),
-      signal,
+      signal: linkedSignal,
       body: JSON.stringify(
         buildSupervisorBody({ action, project, messages, files, jobId, agentType, provider, model, credentials })
       ),
@@ -408,7 +432,7 @@ export const callSupervisorStream = async (
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
     setJobStatus(jobId, 'failed', { error: body.message || 'Supervisor request failed' });
-    throw new ApiError(502, body.message || 'Supervisor Agent request failed');
+    throw new ApiError(response.status === 429 ? 429 : 502, body.detail || body.message || 'Supervisor Agent request failed');
   }
 
   // Read the SSE stream chunk-by-chunk.
@@ -431,6 +455,8 @@ export const callSupervisorStream = async (
           const { emitAIProgress } = await import('../sockets/index.js');
           emitAIProgress(io, jobId, data);
           setJobStatus(jobId, 'running', { currentNode: data.node, label: data.label });
+          const { AiJob } = await import('../models/AiJob.js');
+          await AiJob.updateOne({ jobId, status: 'running' }, { $set: { progress: data } });
 
         } else if (event === 'error') {
           const { emitAIError } = await import('../sockets/index.js');
@@ -443,7 +469,8 @@ export const callSupervisorStream = async (
           const safetyAudit = takeSafetyAudit(data);
           finalResult = data.data || data;
           finalResult.providerUsage = data.providerUsage || [];
-          const persisted = await persistBoardState(project, chatId, finalResult, audit, jobId);
+          linkedSignal.throwIfAborted();
+          const persisted = await persistBoardState(project, chatId, finalResult, audit, jobId, linkedSignal);
           if (!persisted) {
             const { emitAIError } = await import('../sockets/index.js');
             const failure = { jobId, error: 'Could not save the generated design', node: 'persistence' };
@@ -451,6 +478,7 @@ export const callSupervisorStream = async (
             setJobStatus(jobId, 'failed', failure);
             return failure;
           }
+          linkedSignal.throwIfAborted();
           if (onComplete) await onComplete(finalResult);
           const { emitAIComplete } = await import('../sockets/index.js');
           emitAIComplete(io, jobId, data);
@@ -461,8 +489,10 @@ export const callSupervisorStream = async (
     }
   } finally {
     reader.releaseLock();
+    const stored = jobStore.get(jobId); if (stored?.controller === controller) delete stored.controller;
   }
 
+  if (!finalResult) throw ApiError.badGateway('The engine stream ended without a completed design');
   return finalResult;
 };
 
@@ -512,6 +542,7 @@ let capabilitiesCache = { at: 0, value: null };
  * "unknown" and let the run itself report the problem.
  */
 export const getCapabilities = async () => {
+  if (env.localRuntimeEnabled) return { default_board_provider: 'groq', board_providers: { groq: true }, platform_keys: { groq: Boolean(env.groqApiKey) } };
   if (capabilitiesCache.value && Date.now() - capabilitiesCache.at < CAPABILITIES_TTL_MS) {
     return capabilitiesCache.value;
   }

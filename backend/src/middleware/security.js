@@ -5,6 +5,8 @@ import { ApiError } from '../utils/ApiError.js';
 
 // General API rate limiter
 export const generalLimiter = rateLimit({
+  // Companion polling and inference have authenticated per-device limits.
+  skip: (req) => req.originalUrl.startsWith('/api/v1/runtime/'),
   windowMs: env.rateLimitWindowMs,
   limit: env.rateLimitMax,
   standardHeaders: true,
@@ -43,15 +45,6 @@ export const aiLimiter = rateLimit({
     data: null,
     errors: [{ message: 'AI rate limit exceeded' }],
   },
-});
-
-export const browserInferenceLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  limit: 8,
-  standardHeaders: true,
-  legacyHeaders: false,
-  keyGenerator: (req) => String(req.user._id),
-  message: { success: false, message: 'Too many model requests. Try again shortly.' },
 });
 
 // Mongo sanitize to prevent NoSQL injection

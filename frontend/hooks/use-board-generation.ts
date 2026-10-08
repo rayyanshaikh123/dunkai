@@ -1,14 +1,9 @@
 'use client'
 
 import { useCallback, useEffect, useRef } from 'react'
-import { aiApi, chatApi } from '@/lib/api'
+import { aiApi } from '@/lib/api'
 import { useWorkspaceStore, type BoardArtifact } from '@/lib/store'
 import { boardProviderRequest, hasStoredBoardProvider, readStoredBoardProvider } from '@/lib/providers'
-import { cancelBrowserBoard, runBrowserBoard } from '@/lib/browser-pcb/run-browser-board'
-
-const browserBoardEnabled = process.env.NEXT_PUBLIC_BROWSER_PCB_ENABLED === 'true' ||
-  process.env.NEXT_PUBLIC_BROWSER_COMPUTE_ONLY === 'true'
-let browserRunSequence = 0
 
 /**
  * Board generation ("Generate PCB").
@@ -41,7 +36,6 @@ export function useBoardGeneration(projectId: string | null, chatId: string | nu
   const pushBoardProgress = useWorkspaceStore((s) => s.pushBoardProgress)
   const completeBoardJob = useWorkspaceStore((s) => s.completeBoardJob)
   const failBoardJob = useWorkspaceStore((s) => s.failBoardJob)
-  const resetBoardJob = useWorkspaceStore((s) => s.resetBoardJob)
 
   // Holds the teardown for the listeners of the job currently in flight.
   const cleanupRef = useRef<(() => void) | null>(null)
@@ -53,64 +47,25 @@ export function useBoardGeneration(projectId: string | null, chatId: string | nu
     ? ((pcbIr as { components: unknown[] }).components as unknown[]).length
     : 0
 
-  const handoff = aiOutput?.handoff_validation
-  const blocked = browserBoardEnabled && handoff?.well_formed === false
-  const canGenerate = Boolean(projectId) && componentCount > 0 && !blocked && boardJob.status !== 'running'
+  const canGenerate = Boolean(projectId) && componentCount > 0 && boardJob.status !== 'running'
 
-  const generate = useCallback(async (options?: { alreadyConfirmed?: boolean; chatId?: string | null }) => {
+  const generate = useCallback(async () => {
     if (!projectId) return
 
     // Read through to the store rather than the captured `pcbIr` — see the
     // note on closures in this hook's doc comment.
     const liveIr = (useWorkspaceStore.getState().aiOutput?.pcb_ir ?? null) as Record<string, unknown> | null
     if (!liveIr) return
-    if(browserBoardEnabled && useWorkspaceStore.getState().aiOutput?.handoff_validation?.well_formed===false){
-      failBoardJob('Resolve the component and pin findings in the BOM before generating this board.')
-      return
-    }
 
     cleanupRef.current?.()
-
-    if (browserBoardEnabled) {
-      const targetChatId = options?.chatId ?? chatId ?? useWorkspaceStore.getState().activeChatId
-      if (!targetChatId) {
-        failBoardJob('Open a project chat before generating a board on this device.')
-        return
-      }
-      // Validate before asking for CPU permission. The compiler rejects
-      // unresolved parts and ambiguous pins instead of inventing copper.
-      try {
-        const { compileBrowserIr } = await import('@/lib/browser-pcb/passive-ir')
-        compileBrowserIr(liveIr)
-      } catch (error) {
-        failBoardJob(error instanceof Error ? error.message : 'This design cannot be built in the browser yet.')
-        return
-      }
-      if (!options?.alreadyConfirmed && !window.confirm('Generate this PCB on your computer? This browser tab will use CPU and memory and must stay open until the preview is saved.')) return
-
-      const sequence = ++browserRunSequence
-      const jobId = crypto.randomUUID()
-      startBoardJob(jobId)
-      try {
-        const result = await runBrowserBoard(liveIr, (stage, label) => {
-          if (sequence === browserRunSequence) pushBoardProgress({ stage, label, detail: null })
-        })
-        if (sequence !== browserRunSequence) return
-        pushBoardProgress({ stage: 'save', label: 'Saving private board preview…', detail: null })
-        const board = await chatApi.saveBrowserBoard(targetChatId, { sourceIr: liveIr, ...result })
-        if (sequence === browserRunSequence) completeBoardJob(board)
-      } catch (error) {
-        if (sequence === browserRunSequence) failBoardJob(error instanceof Error ? error.message : 'Browser board generation failed')
-      }
-      return
-    }
 
     try {
       // The stored id is an OPTION id, which is not always the provider name:
       // two entries can differ only by model. boardProviderRequest is what
       // splits one back into the {provider, model} pair the backend expects.
       // No stored choice: send none, so the server's own default applies.
-      const choice = hasStoredBoardProvider() ? boardProviderRequest(readStoredBoardProvider()) : {}
+      const capabilities = await aiApi.providers()
+      const choice = capabilities.localRuntimeEnabled ? { provider: 'groq' } : hasStoredBoardProvider() ? boardProviderRequest(readStoredBoardProvider()) : {}
       const res = await aiApi.generateBoard(projectId, chatId, choice)
       const jobId = res?.jobId
       if (!jobId) {
@@ -170,16 +125,8 @@ export function useBoardGeneration(projectId: string | null, chatId: string | nu
     }
   }, [projectId, chatId, startBoardJob, pushBoardProgress, completeBoardJob, failBoardJob])
 
-  const cancel = useCallback(() => {
-    if (!browserBoardEnabled) return
-    browserRunSequence += 1
-    cancelBrowserBoard()
-    resetBoardJob()
-  }, [resetBoardJob])
-
   return {
     generate,
-    cancel,
     canGenerate,
     componentCount,
     job: boardJob,

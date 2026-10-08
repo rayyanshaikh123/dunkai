@@ -9,13 +9,13 @@ const check = (environment, disabled) => {
     import {publicPlans} from './src/config/plans.js';
     let reservation;
     if(!env.creditMeteringEnabled){
-      reservation=await reserveCharge({_id:'test-user'},'local-test',{action:'browser_inference'});
+      reservation=await reserveCharge({_id:'test-user'},'local-test',{action:'local_inference'});
       await settleCharge('local-test',{});
     }
     console.log(JSON.stringify({enabled:env.creditMeteringEnabled,bypass:env.disableCreditsForTesting,publicEnabled:publicPlans().meteringEnabled,reservation}));
   `], {
     cwd: new URL('..', import.meta.url), encoding: 'utf8', timeout: 10000,
-    env: { ...process.env, NODE_ENV:environment, BROWSER_COMPUTE_ONLY:'true', BILLING_ENABLED:'false',
+    env: { ...process.env, NODE_ENV:environment, LOCAL_RUNTIME_ENABLED:'true', BILLING_ENABLED:'false',
       DISABLE_CREDITS_FOR_TESTING:String(disabled), JWT_ACCESS_SECRET:'test-access-secret', JWT_REFRESH_SECRET:'test-refresh-secret', BYOK_ENCRYPTION_KEY:'test-key' },
   });
   assert.equal(result.status,0,result.stderr);
