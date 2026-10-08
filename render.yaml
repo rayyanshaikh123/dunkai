@@ -1,13 +1,13 @@
-# Local runtime deployment: Node API only, existing MongoDB Atlas.
-# For your existing hosted API, update its environment and redeploy instead
-# of creating another service. Each user runs the existing AI engine locally.
+# Hugging Face engine deployment: Node API plus existing MongoDB Atlas.
+# For the existing dunkai.onrender.com service, import the generated settings
+# and redeploy instead of creating another service.
 services:
   - type: web
     name: dunkai-api
     runtime: node
     plan: free
     rootDir: backend
-    buildCommand: npm ci --omit=dev && npm run package:runtime
+    buildCommand: npm ci --omit=dev
     startCommand: npm start
     healthCheckPath: /health
     envVars:
@@ -16,6 +16,18 @@ services:
       - key: NODE_VERSION
         value: "22"
       - key: LOCAL_RUNTIME_ENABLED
+        value: "false"
+      - key: SUPERVISOR_AGENT_URL
+        value: https://rayyanshk-dunkai.hf.space
+      - key: SUPERVISOR_AGENT_PATH
+        value: /api/v1/supervisor
+      - key: SUPERVISOR_AGENT_TOKEN
+        sync: false
+      - key: SUPERVISOR_HF_TOKEN
+        sync: false
+      - key: ARCHIVE_SUPERVISOR_ARTIFACTS
+        value: "true"
+      - key: CREDIT_METERING_ENABLED
         value: "true"
       - key: BILLING_ENABLED
         value: "false"

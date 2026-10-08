@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+import sys
 import urllib.request
 from pathlib import Path
 
@@ -61,6 +62,18 @@ def sandbox_status(binary: Path, designer: Path):
     try:
         result = subprocess.run(arguments, capture_output=True, text=True, timeout=15,
                                 env={"PATH": "/usr/local/bin:/usr/bin:/bin"})
-        return result.returncode == 0, "passed" if result.returncode == 0 else result.stderr.strip()[-500:]
+        if result.returncode == 0:
+            os.environ["BOARD_SANDBOX_BACKEND"] = "bubblewrap"
+            return True, "bubblewrap enforcement passed"
+        bubblewrap_reason = result.stderr.strip()[-250:]
+        launcher = designer / "sandbox/launch.py"
+        fallback = subprocess.run([sys.executable, str(launcher), "probe", str(binary), str(designer)],
+                                  capture_output=True, text=True, timeout=150,
+                                  env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")})
+        if fallback.returncode == 0:
+            os.environ["BOARD_SANDBOX_BACKEND"] = "landlock-seccomp"
+            os.environ["BOARD_SANDBOX_PYTHON"] = sys.executable
+            return True, fallback.stdout.strip()
+        return False, ("bubblewrap: " + bubblewrap_reason + "; Landlock: " + fallback.stderr.strip())[-1000:]
     except (OSError, subprocess.TimeoutExpired) as error:
         return False, type(error).__name__

@@ -181,7 +181,7 @@ export const callSupervisor = async ({
     const body = await response.json().catch(() => ({}));
 
     if (!response.ok) {
-      throw new ApiError(502, body.message || 'Supervisor Agent request failed');
+      throw new ApiError([429, 503].includes(response.status) ? response.status : 502, body.detail || body.message || 'Supervisor Agent request failed');
     }
 
     const result = body.data || body;
@@ -431,8 +431,8 @@ export const callSupervisorStream = async (
 
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
-    setJobStatus(jobId, 'failed', { error: body.message || 'Supervisor request failed' });
-    throw new ApiError(response.status === 429 ? 429 : 502, body.detail || body.message || 'Supervisor Agent request failed');
+    setJobStatus(jobId, 'failed', { error: body.detail || body.message || 'Supervisor request failed' });
+    throw new ApiError([429, 503].includes(response.status) ? response.status : 502, body.detail || body.message || 'Supervisor Agent request failed');
   }
 
   // Read the SSE stream chunk-by-chunk.

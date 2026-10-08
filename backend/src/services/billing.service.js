@@ -16,7 +16,7 @@ export const authorizeBoardProvider = async (_user, providerId, credentialIds) =
   }
   const caps = await getCapabilities();
   if (caps && caps.board_providers?.[providerId] === false) {
-    throw ApiError.badRequest(`${spec.label} is unavailable on this deployment`);
+    throw new ApiError(503, caps.pcb_unavailable_reason || `${spec.label} is unavailable on this deployment`);
   }
   return { byok };
 };
@@ -32,7 +32,7 @@ export const boardProviderStatus = async (_user, credentialIds) => {
     return {
       id, label: spec.label, available,
       source: available ? byok ? 'byok' : 'hosted' : null,
-      reason: available ? null : onServer === false ? 'Unavailable on this server' : 'Add your own provider key',
+      reason: available ? null : onServer === false ? (caps?.pcb_unavailable_reason || 'Unavailable on this server') : 'Add your own provider key',
     };
   });
 };

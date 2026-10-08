@@ -1,2 +1,3 @@
 bubblewrap
 ca-certificates
+libseccomp2

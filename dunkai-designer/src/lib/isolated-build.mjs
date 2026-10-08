@@ -7,7 +7,7 @@ import { buildOutputs } from '../stages/e-outputs.mjs'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 const worker = path.join(root, 'src', 'stages', 'e-worker.mjs')
 
-/** Evaluate generated TSX in a separate Linux mount/PID/network namespace. */
+/** Evaluate generated TSX under a checked, fail-closed Linux sandbox. */
 export async function buildOutputsIsolated(workdir, opts = {}) {
   if (process.env.BOARD_SANDBOX_REQUIRED !== 'true') return buildOutputs(workdir, opts)
   const sandbox = [
@@ -22,7 +22,15 @@ export async function buildOutputsIsolated(workdir, opts = {}) {
     '--chdir', root, '--setenv', 'PATH', '/usr/local/bin:/usr/bin:/bin', '--setenv', 'HOME', '/tmp',
     process.execPath, '--max-old-space-size=1024', worker, workdir,
   ]
-  const child = spawnSync('bwrap', sandbox, {
+  const backend = process.env.BOARD_SANDBOX_BACKEND || 'bubblewrap'
+  if (!['bubblewrap', 'landlock-seccomp'].includes(backend)) throw new Error('Unknown PCB sandbox backend')
+  const command = backend === 'landlock-seccomp' ? process.env.BOARD_SANDBOX_PYTHON : 'bwrap'
+  if (!command) throw new Error('PCB sandbox launcher is not configured')
+  const arguments_ = backend === 'landlock-seccomp'
+    ? [path.join(root, 'sandbox', 'launch.py'), 'run', process.execPath, root, workdir,
+       worker, workdir]
+    : sandbox
+  const child = spawnSync(command, arguments_, {
     cwd: root,
     env: { PATH: '/usr/local/bin:/usr/bin:/bin' },
     encoding: 'utf8', timeout: 300_000, maxBuffer: 2 * 1024 * 1024,

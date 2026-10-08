@@ -20,7 +20,8 @@ def build():
         files.append(relative.as_posix())
     for directory, extensions in [("ai_engine/agents", {".py", ".json", ".txt"}),
                                    ("ai_engine/data/profiles", {".json"}),
-                                   ("dunkai-designer/src", {".mjs", ".js", ".ts", ".json"})]:
+                                   ("dunkai-designer/src", {".mjs", ".js", ".ts", ".json"}),
+                                   ("dunkai-designer/sandbox", {".py"})]:
         for file in sorted((ROOT / directory).rglob("*")):
             if not file.is_file() or file.suffix not in extensions: continue
             if any(part.startswith((".", "test", "__pycache__")) for part in file.relative_to(ROOT / directory).parts): continue
