@@ -25,6 +25,7 @@ from typing import Iterator, Mapping
 
 #: provider name -> environment variable holding the operator's key.
 ENV_VARS: dict[str, str] = {
+    "openai": "OPENAI_API_KEY",
     "groq": "GROQ_API_KEY",
     "gemini": "GEMINI_API_KEY",
     "anthropic": "ANTHROPIC_API_KEY",
@@ -46,11 +47,14 @@ def _shared_context_var() -> ContextVar[Mapping[str, str]]:
     if holder is None:
         holder = types.ModuleType("_dunkai_credentials_state")
         holder.request_keys = ContextVar("dunkai_request_keys", default={})
+        holder.request_model = ContextVar("dunkai_request_model", default=None)
         sys.modules["_dunkai_credentials_state"] = holder
     return holder.request_keys
 
 
 _request_keys = _shared_context_var()
+_request_model = sys.modules["_dunkai_credentials_state"].request_model
+OPENAI_MODELS = ("gpt-4.1", "gpt-4.1-mini")
 
 
 def _clean(credentials: Mapping[str, object] | None) -> dict[str, str]:
@@ -64,13 +68,32 @@ def _clean(credentials: Mapping[str, object] | None) -> dict[str, str]:
 
 
 @contextmanager
-def use_credentials(credentials: Mapping[str, object] | None) -> Iterator[None]:
+def use_credentials(credentials: Mapping[str, object] | None, *, model: str | None = None) -> Iterator[None]:
     """Make ``credentials`` the active keys for the duration of the block."""
     token = _request_keys.set(_clean(credentials))
+    model_token = _request_model.set(model)
     try:
         yield
     finally:
+        _request_model.reset(model_token)
         _request_keys.reset(token)
+
+
+def llm_provider() -> str:
+    return "openai" if _request_model.get() in OPENAI_MODELS else "groq"
+
+
+def llm_model(model: str | None = None) -> str:
+    if llm_provider() == "openai":
+        return model if model in OPENAI_MODELS else _request_model.get()
+    return model or os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+
+
+def llm_api_key() -> str:
+    provider = llm_provider()
+    key = api_key(provider)
+    if not key: raise EnvironmentError(f"Add your {provider.title()} API key in Settings before using this model.")
+    return key
 
 
 def api_key(provider: str) -> str | None:

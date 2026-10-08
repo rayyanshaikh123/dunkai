@@ -28,7 +28,8 @@ except ImportError:
     from usage_meter import USAGE_CALLBACK, capture_usage
 
 try:
-    from ..credentials import api_key, groq_api_key, use_credentials
+    from ..credentials import api_key, use_credentials, llm_api_key, llm_model, OPENAI_MODELS
+    from ..llm import create_chat_model
     from .board import _output_root, board_node, stream_board
     from .graph import compile_graph, run_workflow, stream_workflow
     from .nodes import (
@@ -44,7 +45,8 @@ try:
     )
     from .state import CircuitState, _merge_errors
 except ImportError:
-    from credentials import api_key, groq_api_key, use_credentials
+    from credentials import api_key, use_credentials, llm_api_key, llm_model, OPENAI_MODELS
+    from llm import create_chat_model
     from board import _output_root, board_node, stream_board
     from graph import compile_graph, run_workflow, stream_workflow
     from nodes import (
@@ -403,7 +405,7 @@ def health() -> dict[str, str]:
 
 
 #: Board providers that bill an API key, and the credential each one needs.
-_KEYED_BOARD_PROVIDERS = ("groq", "gemini", "anthropic", "ollama")
+_KEYED_BOARD_PROVIDERS = ("groq", "gemini", "anthropic", "ollama", "openai")
 
 
 @app.get("/api/v1/supervisor/capabilities", dependencies=[Depends(require_backend)])
@@ -447,7 +449,7 @@ def board_artifact(artifact_path: str):
 
 @app.post("/api/v1/supervisor", dependencies=[Depends(require_backend)])
 def supervisor_endpoint(payload: SupervisorRequest) -> dict[str, Any]:
-    with use_credentials(payload.credentials), capture_usage() as usage:
+    with use_credentials(payload.credentials, model=payload.model), capture_usage() as usage:
         result = _supervisor_dispatch(payload)
         result["providerUsage"] = usage
         return result
@@ -577,7 +579,7 @@ def _stream_generator(payload: SupervisorRequest):
     keepalive pump thread, which calls ``next()`` from one context throughout,
     so the value set here is the one every node of this run sees.
     """
-    with use_credentials(payload.credentials), capture_usage() as usage:
+    with use_credentials(payload.credentials, model=payload.model), capture_usage() as usage:
         for chunk in _stream_events(payload):
             if chunk.startswith(("event: complete\n", "event: error\n")):
                 event, data_line, *_ = chunk.split("\n")
@@ -868,6 +870,7 @@ CODE_CHAT_MODELS = {
     "openai/gpt-oss-120b",
     "openai/gpt-oss-20b",
     "qwen/qwen3.8-27b",
+    *OPENAI_MODELS,
 }
 
 class CodeFileUpdate(BaseModel):
@@ -887,7 +890,7 @@ class CodeChatResponse(BaseModel):
 @app.post("/api/v1/supervisor/code-chat", dependencies=[Depends(require_backend)])
 def code_chat_endpoint(req: CodeChatRequest):
     """Specific endpoint for iterative code editing using Groq."""
-    with use_credentials(req.credentials), capture_usage() as usage:
+    with use_credentials(req.credentials, model=req.model), capture_usage() as usage:
         result = _code_chat(req).model_dump()
         result["providerUsage"] = usage
         return result
@@ -909,13 +912,13 @@ def _code_chat(req: CodeChatRequest) -> CodeChatResponse:
                                 updated_files=None, safety_audit=verdict.audit())
 
     default_model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
-    model = req.model if req.model in CODE_CHAT_MODELS else default_model
-    llm = ChatGroq(model=model, temperature=0.1, api_key=groq_api_key(), callbacks=[USAGE_CALLBACK])
+    model = llm_model(req.model if req.model in CODE_CHAT_MODELS else default_model)
+    llm = create_chat_model(model=model, temperature=0.1, api_key=llm_api_key(), callbacks=[USAGE_CALLBACK])
     # gpt-oss needs method="json_schema": its Harmony tool-call format breaks the
     # "function_calling" method (it calls a tool literally named "json" and
     # LangChain rejects it as tool_use_failed) -- same fix as requirement_agent.py.
     # Groq only offers json_schema on gpt-oss, so the other models use tool calling.
-    method = "json_schema" if model.startswith("openai/gpt-oss") else "function_calling"
+    method = "json_schema" if model.startswith("openai/gpt-oss") or model in OPENAI_MODELS else "function_calling"
     structured_llm = llm.with_structured_output(CodeChatResponse, method=method)
 
     # Format the current files as context

@@ -265,7 +265,7 @@ export const aiApi = {
         reason: string | null
       }>
       defaultBoardProvider: string | null
-      chat: { byok: boolean; hosted: boolean | null }
+      chat: { byok: boolean; openaiByok?: boolean; hosted: boolean | null }
       engineReachable: boolean
       localRuntimeEnabled?: boolean
       runtime?: RuntimeDevice | null
@@ -273,7 +273,7 @@ export const aiApi = {
 }
 
 // ---- Account (BYOK keys) ----
-export type ByokProvider = 'groq' | 'gemini' | 'anthropic'
+export type ByokProvider = 'groq' | 'gemini' | 'anthropic' | 'openai'
 
 export interface ApiKeyStatus {
   provider: ByokProvider

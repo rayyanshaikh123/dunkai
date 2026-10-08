@@ -22,6 +22,14 @@ export interface ModelOption {
 
 export const AVAILABLE_MODELS: ModelOption[] = [
   {
+    id: 'gpt-4.1', name: 'GPT-4.1', provider: 'OpenAI', badge: 'Your key',
+    description: 'Design pipeline using your OpenAI API key.', icon: Sparkles,
+  },
+  {
+    id: 'gpt-4.1-mini', name: 'GPT-4.1 mini', provider: 'OpenAI', badge: 'Your key',
+    description: 'Smaller GPT model using your OpenAI API key.', icon: Zap,
+  },
+  {
     id: 'openai/gpt-oss-120b',
     name: 'GPT-OSS 120B',
     provider: 'Groq',
@@ -88,7 +96,7 @@ export function ModelSelector({
           <DropdownMenuLabel className="p-0 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
             AI Engine Model
           </DropdownMenuLabel>
-          <span className="text-[10px] text-muted-foreground/60 font-mono">Groq Powered</span>
+          <span className="text-[10px] text-muted-foreground/60 font-mono">{current.provider}</span>
         </div>
 
         <DropdownMenuSeparator className="my-1 bg-border/60" />

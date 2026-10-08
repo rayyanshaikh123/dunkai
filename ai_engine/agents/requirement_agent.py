@@ -50,10 +50,12 @@ except ImportError:
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 try:
-    from .credentials import groq_api_key
+    from .credentials import llm_api_key, llm_model
+    from .llm import create_chat_model
     from .groq_limits import GroqQuotaExhausted, invoke_with_limits
 except ImportError:  # imported as a top-level module by the supervisor
-    from credentials import groq_api_key
+    from credentials import llm_api_key, llm_model
+    from llm import create_chat_model
     from groq_limits import GroqQuotaExhausted, invoke_with_limits
 
 __all__ = [
@@ -327,7 +329,7 @@ SYSTEM_PROMPT = _SYSTEM_PROMPT_TEMPLATE.format(max_turns=MAX_INTERVIEW_TURNS)
 
 @lru_cache(maxsize=32)
 def _get_llm(model: str | None, api_key: str) -> ChatGroq:
-    return ChatGroq(model=model or MODEL_NAME, groq_api_key=api_key, temperature=TEMPERATURE, max_retries=2, callbacks=[USAGE_CALLBACK])
+    return create_chat_model(model=model or MODEL_NAME, api_key=api_key, temperature=TEMPERATURE, max_retries=2, callbacks=[USAGE_CALLBACK])
 
 
 _OPTION_SYSTEM_PROMPT = (
@@ -358,11 +360,11 @@ def _interview_chain(model: str | None, api_key: str):
 
 
 def _get_option_chain(model: str | None = None):
-    return _option_chain(model, groq_api_key())
+    return _option_chain(llm_model(model), llm_api_key())
 
 
 def _get_interview_chain(model: str | None = None):
-    return _interview_chain(model, groq_api_key())
+    return _interview_chain(llm_model(model), llm_api_key())
 
 
 # ---------------------------------------------------------------------------

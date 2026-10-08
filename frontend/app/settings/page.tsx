@@ -39,6 +39,7 @@ import { CREDIT_PACK_COPY } from '@/lib/plans'
 import { RuntimeSection } from '@/components/settings/runtime-section'
 
 const KEY_PLACEHOLDERS: Record<ByokProvider, string> = {
+  openai: 'sk-proj-…',
   groq: 'gsk_…',
   gemini: 'AIza…',
   anthropic: 'sk-ant-…',
@@ -316,11 +317,8 @@ function SettingsContent() {
           </div>
           {providers.data && (
             <p className="mt-4 text-sm text-muted-foreground">
-              Design chat runs on{' '}
-              <span className="font-medium text-foreground">
-                {providers.data.chat.byok ? 'your Groq key' : 'DunkAI’s hosted Groq key'}
-              </span>
-              .
+              Choose GPT-4.1 or GPT-4.1 mini in the chat model picker to use your OpenAI key for the full design pipeline.
+              {' '}Groq models use {providers.data.chat.byok ? 'your Groq key' : 'DunkAI’s hosted Groq key'}.
             </p>
           )}
         </Section>}

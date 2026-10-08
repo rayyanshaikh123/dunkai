@@ -49,10 +49,12 @@ except ImportError:
     from usage_meter import USAGE_CALLBACK
 
 try:
-    from .credentials import groq_api_key
+    from .credentials import llm_api_key, llm_model
+    from .llm import create_chat_model
     from .groq_limits import GroqQuotaExhausted, invoke_with_limits
 except ImportError:  # imported as a top-level module by the supervisor
-    from credentials import groq_api_key
+    from credentials import llm_api_key, llm_model
+    from llm import create_chat_model
     from groq_limits import GroqQuotaExhausted, invoke_with_limits
 
 # llama-3.3-70b-versatile, as requested. Note: Groq has this on a deprecation
@@ -428,7 +430,7 @@ def _call_groq(system_prompt: str, user_content: str, *, model: str | None = Non
     charge: Groq counts tokens actually used against the per-minute limit.
     """
     try:
-        api_key = groq_api_key()
+        api_key = llm_api_key()
     except EnvironmentError as exc:
         raise RuntimeError(str(exc)) from exc
 
@@ -439,9 +441,9 @@ def _call_groq(system_prompt: str, user_content: str, *, model: str | None = Non
         # Only gpt-oss takes low/medium/high; other models (qwen) use different values.
         if effort and name.startswith("openai/gpt-oss"):
             extra["reasoning_effort"] = effort
-        llm = ChatGroq(
+        llm = create_chat_model(
             model=name,
-            groq_api_key=api_key,
+            api_key=api_key,
             temperature=0,
             max_tokens=max_tokens,
             max_retries=2,
@@ -453,14 +455,14 @@ def _call_groq(system_prompt: str, user_content: str, *, model: str | None = Non
 
     # Rate limits are handled in groq_limits (wait on a per-minute limit, fall
     # back to another model on a spent daily one); anything else is an API error.
-    requested = model or DEFAULT_MODEL
+    requested = llm_model(model or DEFAULT_MODEL)
     try:
         response, _ = invoke_with_limits(call, requested, agent="Architecture Agent")
     except GroqQuotaExhausted:
         raise
     except Exception as exc:
         if not _json_generation_failed(exc):
-            raise RuntimeError(f"Groq API error: {exc}") from exc
+            raise RuntimeError(f"Model API error: {exc}") from exc
         print("[Architecture Agent] Model returned no valid JSON; retrying once with low reasoning effort.")
         try:
             response, _ = invoke_with_limits(
@@ -474,7 +476,7 @@ def _call_groq(system_prompt: str, user_content: str, *, model: str | None = Non
                     "the model did not produce valid architecture JSON, twice (it most likely spent its "
                     "output budget reasoning). Try again, or choose a different model in the chat's model picker."
                 ) from retry_exc
-            raise RuntimeError(f"Groq API error: {retry_exc}") from retry_exc
+            raise RuntimeError(f"Model API error: {retry_exc}") from retry_exc
 
     content = response.content
     if not content:

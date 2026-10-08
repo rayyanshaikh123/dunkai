@@ -98,6 +98,20 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
                     self.assertGreaterEqual(len(requests), 2)
                     self.assertFalse(app.state.busy)
                     self.assertIsNone(engine.process)
+                    with patch.dict(os.environ, {"OPENAI_API_BASE": f"http://127.0.0.1:{mock.server_port}/v1"}):
+                        gpt_engine = EngineProcess(root, directory, "shared-secret")
+                        gpt_app = create_app(gpt_engine, "shared-secret")
+                        offset = len(requests)
+                        async with httpx.AsyncClient(transport=httpx.ASGITransport(gpt_app), base_url="http://space.test", timeout=90) as client:
+                            gpt_response = await client.post("/api/v1/supervisor/stream", headers={"x-supervisor-token": "shared-secret"},
+                                json={"action": "run_workflow", "model": "gpt-4.1", "credentials": {"openai": "sk-proj-mock-user-key"}, "project": {},
+                                      "messages": [{"role": "user", "content": "Design a temperature sensor board"}]})
+                        self.assertEqual(gpt_response.status_code, 200, gpt_response.text)
+                        self.assertIn("How should this sensor board be powered?", gpt_response.text)
+                        self.assertGreaterEqual(len(requests[offset:]), 2)
+                        self.assertTrue(all(request["model"] == "gpt-4.1" for request in requests[offset:]))
+                        self.assertIsNone(gpt_engine.process)
+
                 finally: await engine.stop()
         finally:
             mock.shutdown(); mock.server_close(); thread.join(timeout=5)

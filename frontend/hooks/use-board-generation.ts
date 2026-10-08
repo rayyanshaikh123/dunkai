@@ -65,7 +65,11 @@ export function useBoardGeneration(projectId: string | null, chatId: string | nu
       // splits one back into the {provider, model} pair the backend expects.
       // No stored choice: send none, so the server's own default applies.
       const capabilities = await aiApi.providers()
-      const choice = capabilities.localRuntimeEnabled ? { provider: 'groq' } : hasStoredBoardProvider() ? boardProviderRequest(readStoredBoardProvider()) : {}
+      const selectedModel = useWorkspaceStore.getState().selectedModel
+      const gptSelected = ['gpt-4.1', 'gpt-4.1-mini'].includes(selectedModel)
+      const choice = capabilities.localRuntimeEnabled ? { provider: 'groq' }
+        : hasStoredBoardProvider() ? boardProviderRequest(readStoredBoardProvider())
+        : gptSelected ? { provider: 'openai', model: selectedModel } : {}
       const res = await aiApi.generateBoard(projectId, chatId, choice)
       const jobId = res?.jobId
       if (!jobId) {

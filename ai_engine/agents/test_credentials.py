@@ -41,9 +41,14 @@ with use_credentials({"groq": "  user-key  "}):
     check("is_user_key reports the source", is_user_key("groq") and not is_user_key("gemini"))
 check("key is gone after the block", api_key("groq") == "platform-key")
 
-with use_credentials({"groq": "", "openai": "x", "gemini": 5}):  # type: ignore[dict-item]
+with use_credentials({"groq": "", "unknown": "x", "gemini": 5}):  # type: ignore[dict-item]
     check("blank, unknown and non-string entries are ignored",
-          api_key("groq") == "platform-key" and api_key("openai") is None and not is_user_key("gemini"))
+          api_key("groq") == "platform-key" and api_key("unknown") is None and not is_user_key("gemini"))
+
+with use_credentials({"openai": "gpt-user-key"}, model="gpt-4.1"):
+    check("GPT uses its request key and model", credentials.llm_api_key() == "gpt-user-key" and credentials.llm_model() == "gpt-4.1")
+    check("GPT key reaches only its designer child", subprocess_env().get("OPENAI_API_KEY") == "gpt-user-key" and os.getenv("OPENAI_API_KEY") is None)
+check("GPT provider context resets", credentials.llm_provider() == "groq" and api_key("openai") is None)
 
 # ---- both import names share one ContextVar -------------------------------------
 # server.py/board.py import `agents.credentials`; the agents import `credentials`.

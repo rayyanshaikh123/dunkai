@@ -11,7 +11,7 @@ export const authorizeBoardProvider = async (_user, providerId, credentialIds) =
   const spec = BOARD_PROVIDERS[providerId];
   if (!spec) throw ApiError.badRequest(`Unknown board provider "${providerId}"`);
   const byok = Boolean(spec.credential && credentialIds.has(spec.credential));
-  if (env.billingEnabled && !byok && providerId !== 'groq') {
+  if ((env.billingEnabled || providerId === 'openai') && !byok && providerId !== 'groq') {
     throw new ApiError(402, `${spec.label} board generation requires your own provider key. Hosted boards use Groq.`);
   }
   const caps = await getCapabilities();
@@ -27,7 +27,7 @@ export const boardProviderStatus = async (_user, credentialIds) => {
     const spec = BOARD_PROVIDERS[id];
     const byok = Boolean(spec.credential && credentialIds.has(spec.credential));
     const onServer = caps ? Boolean(caps.board_providers?.[id]) : null;
-    const permitted = !env.billingEnabled || byok || id === 'groq';
+    const permitted = byok || id === 'groq' || (!env.billingEnabled && id !== 'openai');
     const available = onServer !== false && permitted;
     return {
       id, label: spec.label, available,

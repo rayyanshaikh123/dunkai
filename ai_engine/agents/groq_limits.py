@@ -93,6 +93,16 @@ def invoke_with_limits(
     own list (the safety classifier falls back to a classifier-capable model,
     not to whatever the design agents use).
     """
+    try:
+        from .credentials import llm_provider, llm_model
+    except ImportError:
+        from credentials import llm_provider, llm_model
+    if llm_provider() == "openai":
+        # The OpenAI SDK handles its bounded retries. Never route a GPT key
+        # to Groq, or switch a BYOK request to an operator-funded provider.
+        selected = llm_model(model)
+        return call(selected), selected
+
     exhausted: list[str] = []
 
     for candidate in candidate_models(model, fallbacks):

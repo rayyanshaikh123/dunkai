@@ -27,6 +27,13 @@ const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000
  * nothing; the same code path then serves Ollama Cloud when a key is present.
  */
 const TARGETS = {
+  openai: {
+    label: "OpenAI",
+    baseUrl: () => process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1",
+    keyVar: "OPENAI_API_KEY",
+    keyRequired: true,
+    defaultModel: () => process.env.DESIGNER_OPENAI_MODEL ?? "gpt-4.1",
+  },
   gemini: {
     label: "Google Gemini",
     baseUrl: () =>
@@ -103,8 +110,9 @@ function createClient(target, { model, timeoutMs, maxTokens }) {
     const body = {
       model,
       messages,
-      max_tokens: tokens,
-      temperature: 0.2,
+      ...(target === "openai" ? { max_completion_tokens: tokens } : { max_tokens: tokens }),
+      // GPT-4.1 accepts temperature; reasoning models use their own defaults.
+      ...(target !== "openai" || model.startsWith("gpt-4") ? { temperature: 0.2 } : {}),
       ...(json ? { response_format: { type: "json_object" } } : {}),
     }
 

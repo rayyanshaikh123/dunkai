@@ -213,16 +213,18 @@ def _call_model(model: str, transcript: str) -> str:
         from usage_meter import USAGE_CALLBACK
 
     try:
-        from credentials import groq_api_key
+        from credentials import llm_api_key, llm_model
+        from llm import create_chat_model
     except ImportError:
-        from .credentials import groq_api_key
+        from .credentials import llm_api_key, llm_model
+        from .llm import create_chat_model
     try:
-        api_key = groq_api_key()
+        api_key = llm_api_key()
     except EnvironmentError as exc:
         raise RuntimeError(str(exc)) from exc
-    llm = ChatGroq(
-        model=model,
-        groq_api_key=api_key,
+    llm = create_chat_model(
+        model=llm_model(model),
+        api_key=api_key,
         temperature=0,
         # Room for the model's reasoning as well as the small JSON answer.
         max_tokens=2000,

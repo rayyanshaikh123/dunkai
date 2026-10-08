@@ -24,6 +24,7 @@ import { enqueueAiJob, aiQueue, redisConnection } from '../services/queue.servic
 import { logActivity } from '../helpers/activity.js';
 import { notify } from '../helpers/notification.js';
 import { v4 as uuidv4 } from 'uuid';
+import { OPENAI_PIPELINE_MODELS, pipelineProviderForModel } from '../config/providers.js';
 
 /**
  * Who pays for this request, reserved before it starts.
@@ -48,7 +49,12 @@ const prepareAiRequest = async (req, { jobId, action = 'run_workflow', provider 
     return { credentials };
   }
 
-  await reserveCharge(req.user, jobId, { action, byok: have.has('groq'), chatId, projectId });
+  const inferenceProvider = pipelineProviderForModel(req.body.model);
+  if (inferenceProvider === 'openai') {
+    if (!OPENAI_PIPELINE_MODELS.includes(req.body.model)) throw ApiError.badRequest('Choose GPT-4.1 or GPT-4.1 mini for the design pipeline');
+    if (!have.has('openai')) throw ApiError.badRequest('Add your OpenAI API key in Settings before using GPT');
+  }
+  await reserveCharge(req.user, jobId, { action, byok: have.has(inferenceProvider), chatId, projectId });
   return { credentials };
 };
 
@@ -86,7 +92,7 @@ export const providers = asyncHandler(async (req, res) => {
     data: {
       boardProviders: await boardProviderStatus(req.user, have),
       defaultBoardProvider: caps?.default_board_provider ?? null,
-      chat: { byok: have.has('groq'), hosted: caps ? Boolean(caps.platform_keys?.groq) : null },
+      chat: { byok: have.has('groq'), openaiByok: have.has('openai'), hosted: caps ? Boolean(caps.platform_keys?.groq) : null },
       engineReachable: Boolean(caps),
     },
   });
@@ -106,6 +112,7 @@ export const chat = asyncHandler(async (req, res) => {
       agentType: req.body.agentType,
       files: req.body.files || [],
       credentials,
+      model: req.body.model,
       audit: { userId: req.user._id, projectId: req.body.projectId },
     })
   );

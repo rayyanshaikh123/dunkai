@@ -6,6 +6,7 @@ export const createChatValidation = [
 ];
 
 export const sendMessageValidation = [
+  body('model').optional().isString().isLength({ max: 120 }),
   body('content').isLength({ min: 1, max: 8000 }).withMessage('Message content is required (1-8000 chars)'),
   body('attachments').optional().isArray({ max: 5 }),
   body('agentType').optional().isIn(['chat']),

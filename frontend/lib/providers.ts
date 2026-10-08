@@ -17,7 +17,7 @@
  * board that routed, while the OpenAI-compatible three are ~100x cheaper per run.
  */
 
-export type BoardProviderId = 'claude-code' | 'anthropic' | 'gemini' | 'groq' | 'ollama'
+export type BoardProviderId = 'claude-code' | 'anthropic' | 'gemini' | 'groq' | 'ollama' | 'openai'
 
 export interface BoardProvider {
   /** Select value and localStorage key. Unique per OPTION, not per provider. */
@@ -29,10 +29,18 @@ export interface BoardProvider {
   label: string
   hint: string
   /** The BYOK provider whose key pays for this option, when it takes one. */
-  byok?: 'groq' | 'gemini' | 'anthropic'
+  byok?: 'groq' | 'gemini' | 'anthropic' | 'openai'
 }
 
 export const BOARD_PROVIDERS: readonly BoardProvider[] = [
+  {
+    id: 'openai',
+    provider: 'openai',
+    model: 'gpt-4.1',
+    label: 'GPT-4.1',
+    hint: 'PCB generation using your OpenAI API key.',
+    byok: 'openai',
+  },
   {
     id: 'claude-code',
     provider: 'claude-code',

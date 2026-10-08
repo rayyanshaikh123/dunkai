@@ -9,6 +9,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { resolveCredentials } from './apiKey.service.js';
 import { reserveCharge, settleCharge } from './credits.service.js';
 import { env } from '../config/env.js';
+import { OPENAI_PIPELINE_MODELS, pipelineProviderForModel } from '../config/providers.js';
 
 // ---- Get a chat owned by the user ----
 
@@ -103,11 +104,13 @@ export const saveMessage = async (chatId, { type = 'user', content, metadata = {
 
 // ---- Send message (stores user message, calls supervisor, stores assistant reply) ----
 
-export const sendMessage = async (chatId, { content, attachments = [], agentType }, user, req = null) => {
+export const sendMessage = async (chatId, { content, attachments = [], agentType, model }, user, req = null) => {
   const chat = await getOwnedChat(chatId, user);
   const jobId = uuidv4();
   const credentials = env.localRuntimeEnabled ? {} : await resolveCredentials(user._id);
-  await reserveCharge(user, jobId, { action: 'chat', byok: Boolean(credentials.groq), chatId: chat._id, projectId: chat.project });
+  const provider = pipelineProviderForModel(model);
+  if (provider === 'openai' && (!OPENAI_PIPELINE_MODELS.includes(model) || !credentials.openai)) throw ApiError.badRequest('Save your OpenAI API key and select GPT-4.1 or GPT-4.1 mini');
+  await reserveCharge(user, jobId, { action: 'chat', byok: Boolean(credentials[provider]), chatId: chat._id, projectId: chat.project });
 
   // Store user message
   let userMessage;
@@ -141,6 +144,7 @@ export const sendMessage = async (chatId, { content, attachments = [], agentType
       messages: [...priorMessages].map((m) => ({ type: m.type, content: m.content })),
       files: attachments,
       credentials,
+      model,
       jobId,
       audit: { userId: user._id, projectId: chat.project, chatId: chat._id },
     });

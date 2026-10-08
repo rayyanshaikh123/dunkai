@@ -9,6 +9,7 @@ import { settleCharge } from './services/credits.service.js';
 import { callSupervisorStream } from './services/supervisor.service.js';
 import { AI_QUEUE_NAME, redisConnection } from './services/queue.service.js';
 import { emitAIError } from './sockets/index.js';
+import { pipelineProviderForModel } from './config/providers.js';
 
 await connectDatabase();
 const connection = redisConnection();
@@ -34,10 +35,10 @@ const worker = new Worker(AI_QUEUE_NAME, async ({ data }) => {
   const credentials = await resolveCredentials(user._id);
   const charge = await AiCharge.findOne({ jobId: record.jobId });
   if (charge?.byok) {
-    const credential = record.action === 'generate_board' ? payload.provider || 'groq' : 'groq';
+    const credential = record.action === 'generate_board' ? payload.provider || 'groq' : pipelineProviderForModel(payload.model);
     if (!credentials[credential]) throw new Error('The saved provider key was removed before this job started');
   } else if (charge && record.action !== 'generate_board') {
-    delete credentials.groq;
+    delete credentials[pipelineProviderForModel(payload.model)];
   } else if (charge?.kind === 'board') {
     delete credentials[payload.provider || 'groq'];
   }

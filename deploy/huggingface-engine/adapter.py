@@ -99,7 +99,7 @@ def create_app(engine, token, *, pcb_ready=False, pcb_reason="PCB runtime not va
         authenticate(request)
         return {"data": {"default_board_provider": "groq",
                          "platform_keys": {"groq": bool(os.environ.get("GROQ_API_KEY"))},
-                         "board_providers": {"groq": pcb_ready, "gemini": pcb_ready,
+                         "board_providers": {"groq": pcb_ready, "gemini": pcb_ready, "openai": pcb_ready,
                                              "anthropic": pcb_ready, "ollama": False, "claude-code": False},
                          "pcb_unavailable_reason": None if pcb_ready else pcb_reason}}
 
