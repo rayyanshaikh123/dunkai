@@ -210,6 +210,24 @@ export function mapPins(design, resolutions) {
       const role = member.role
       const placeholdersLeft = part.pins.some((p) => !p.labels.length && !part.used.has(p.key))
 
+      // Explicit LDO functions identify distinct rails. Selecting all supply
+      // pins here would short the regulator input, enable and output together.
+      // The function is verified against the resolved symbol, never promoted
+      // directly from an asserted pad number.
+      if (member.pin_function) {
+        const functionName = member.pin_function.toUpperCase()
+        const chosen = part.pins.filter((p) => !p.doNotConnect && p.labels.some((label) => String(label).toUpperCase() === functionName))
+        if (!chosen.length) throw new Error(`${ref}: no verified pin for function ${functionName}`)
+        for (const pin of chosen) {
+          if (part.used.has(pin.key) && assignments[ref]?.[pin.key] !== net.name) {
+            throw new Error(`${ref}.${pin.key} cannot be assigned to two different rails`)
+          }
+          assign(ref, pin.key, net.name)
+        }
+        record({ ref_id: ref, net: net.name, interface: iface, role, pins: chosen.map((p) => p.key), source: "label", label: functionName })
+        continue
+      }
+
       // --- supply / ground: every matching pin, not just the first -----------
       if (role === "SUPPLY" || role === "GROUND") {
         const byAttr = freePins(part).filter((p) => (role === "SUPPLY" ? p.requiresPower : p.requiresGround))

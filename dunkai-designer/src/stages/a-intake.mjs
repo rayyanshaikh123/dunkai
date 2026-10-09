@@ -73,6 +73,9 @@ const normaliseComponent = (raw, index) => {
   // lets Stage B skip straight to tier 1 instead of re-deriving it from the MPN.
   const lcsc = String(raw.lcsc ?? raw.lcsc_part ?? raw.jlcpcb_part ?? "").trim()
   if (lcsc && lcsc.toLowerCase() !== "nan") component.lcsc = lcsc
+  if (raw.board_profile) component.board_profile = String(raw.board_profile)
+  if (raw.required) component.required = true
+  if (raw.device_reference) component.device_reference = String(raw.device_reference)
   return component
 }
 
@@ -82,6 +85,7 @@ const normaliseNetV2 = (raw, index) => {
     .map((m) => ({
       ref_id: String(m.ref_id ?? "").trim(),
       role: String(m.role ?? "SIGNAL").trim().toUpperCase(),
+      ...(m.pin_function ? { pin_function: String(m.pin_function).trim().toUpperCase() } : {}),
     }))
     .filter((m) => m.ref_id)
   return {
@@ -89,6 +93,7 @@ const normaliseNetV2 = (raw, index) => {
     net_class: String(raw.net_class ?? "signal").toLowerCase(),
     interface: String(raw.interface ?? inferInterface(raw)),
     members,
+    ...(Number.isFinite(raw.voltage_v) ? { voltage_v: raw.voltage_v } : {}),
   }
 }
 
@@ -201,6 +206,9 @@ export async function intake(input) {
     nets: nets.filter((n) => n.members.length > 0),
     constraints: normaliseConstraints(pcbIr.constraints),
     wireless_links: Array.isArray(pcbIr.wireless_links) ? pcbIr.wireless_links : [],
+    external_components: Array.isArray(pcbIr.external_components) ? pcbIr.external_components : [],
+    required_devices: Array.isArray(pcbIr.required_devices) ? pcbIr.required_devices : [],
+    assembly_notes: Array.isArray(pcbIr.assembly_notes) ? pcbIr.assembly_notes : [],
     provenance: {
       source_schema: schema_version,
       // The single flag every later stage keys off when deciding how much to
@@ -208,6 +216,20 @@ export async function intake(input) {
       pin_names_asserted: !isV2,
       warnings,
     },
+  }
+
+  // A connector alone does not satisfy a requirement for the actual device.
+  for (const device of design.required_devices) {
+    const external = design.external_components.find((c) => c.node_id === device.node_id && c.external_key === device.key)
+    if (!external?.mfr_part || !external.device_profile || external.status === "SELECTION_REQUIRED" || !external.pcb_references?.length) {
+      throw new Error(`Required device ${device.label} is missing its system BOM part or PCB connection path`)
+    }
+    if (external.via_reference && !design.external_components.some((c) => c.reference === external.via_reference && c.device_profile === "solar_manager")) {
+      throw new Error(`Required device ${device.label} is missing its external charger`)
+    }
+    for (const ref of external.pcb_references) {
+      if (!seen.has(ref)) throw new Error(`Required device ${device.label} references a missing PCB port ${ref}`)
+    }
   }
 
   for (const w of warnings) note(`  intake warning: ${w}`)

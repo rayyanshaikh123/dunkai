@@ -190,6 +190,10 @@ class ArchitectureParser:
 
             "category": category,
 
+            # External bodies remain system parts; selection uses documented
+            # module profiles rather than unrelated chip-catalogue matches.
+            **{key: data[key] for key in ("external_key", "device_profile", "requested_part", "external", "required") if key in data},
+
             # Kept as-is: retrieval._build_query embeds these as query TEXT,
             # which is a separate job from scoring. Dropping "WiFi" from the
             # query would lose a genuinely useful semantic signal for finding a

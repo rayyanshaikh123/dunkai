@@ -9,6 +9,7 @@ const FILES = {
   circuitJson: 'circuit.json', schematicSvg: 'schematic.svg', pcbSvg: 'pcb.svg',
   boardGlb: 'board.glb', boardGltfJson: 'board.gltf.json', bomCsv: 'bom.csv',
   pickAndPlaceCsv: 'pick-and-place.csv', designBrief: 'design-brief.md', resolution: 'resolution.json',
+  systemAssembly: 'system-assembly.json',
 };
 const REQUIRED = ['circuitJson', 'schematicSvg', 'pcbSvg'];
 const LIMIT = 32 * 1024 * 1024;

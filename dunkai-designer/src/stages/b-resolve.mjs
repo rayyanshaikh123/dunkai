@@ -31,6 +31,7 @@ import { fileURLToPath } from "node:url"
 import { stage, item, note } from "../lib/events.mjs"
 import { standardFootprintCandidates } from "../lib/package-footprints.mjs"
 import { readCached, writeCached } from "../lib/resolution-cache.mjs"
+import { resolveBoardProfile } from "../lib/board-profiles.mjs"
 import {
   parseImportedChip,
   parseImportOutput,
@@ -395,6 +396,8 @@ export async function resolveComponents(design, workdir, provider, opts = {}) {
 
   const concurrency = opts.concurrency ?? DEFAULT_CONCURRENCY
   const resolutions = await mapLimit(design.components, concurrency, async (component) => {
+    const profile = await resolveBoardProfile(component, workdir, req)
+    if (profile) return { component, ...profile }
     // A part that resolved on an earlier run resolves the same way now: the
     // catalogue search is a live service and has returned a different (wrong)
     // part for the same query between runs.

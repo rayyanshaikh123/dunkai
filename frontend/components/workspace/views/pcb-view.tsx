@@ -53,6 +53,7 @@ const DOWNLOADS: Array<{ key: string; label: string }> = [
   { key: 'pickAndPlaceCsv', label: 'Pick and place (.csv)' },
   { key: 'designBrief', label: 'Design brief (.md)' },
   { key: 'resolution', label: 'Component resolution (.json)' },
+  { key: 'systemAssembly', label: 'External devices and assembly (.json)' },
 ]
 
 export function PcbView({ projectId }: { projectId?: string } = {}) {

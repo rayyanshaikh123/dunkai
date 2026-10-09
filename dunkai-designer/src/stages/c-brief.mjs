@@ -41,7 +41,8 @@ function renderNets(design) {
         // brackets rather than as an instruction. Stage D is told, in the rules
         // below, to verify it against the imported symbol before using it.
         const pin = m.asserted_pin ? ` [claimed pin: ${m.asserted_pin}]` : ""
-        return `${m.ref_id}:${m.role}${pin}`
+        const fn = m.pin_function ? ` [verified symbol function: ${m.pin_function}]` : ""
+        return `${m.ref_id}:${m.role}${pin}${fn}`
       })
       .join(", ")
     lines.push(`- **${net.name}** (${net.net_class}, ${net.interface}) — ${members}`)
@@ -83,6 +84,15 @@ export function synthesiseBrief(design, resolution) {
 
   parts.push(heading("Nets"))
   parts.push(renderNets(design))
+
+  if (design.external_components?.length) {
+    parts.push(heading("Required external devices and wiring"))
+    parts.push(design.external_components.map((device) =>
+      `- **${device.reference ?? device.node_id} ${device.subsystem ?? device.external_key ?? "Module"}**: ${device.manufacturer ?? ""} ${device.mfr_part}. ` +
+      `PCB connection: ${(device.pcb_references ?? []).join(", ")}${device.via_reference ? ` via ${device.via_reference}` : ""}. ${device.assembly ?? ""}`
+    ).join("\n"))
+    parts.push("\nEvery listed external device remains a required system BOM part. Do not replace it with its connector or invent a chip footprint for its body. Header pin order defines a custom harness, not a plug-compatible JST/Gravity connector. Keep regulated 5V input and 3.3V logic rails separate.")
+  }
 
   if (design.wireless_links.length) {
     parts.push(heading("Wireless links — NOT board nets"))

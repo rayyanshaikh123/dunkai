@@ -11,6 +11,7 @@ import logging
 import re
 import sys
 import tempfile
+import uuid
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -320,6 +321,8 @@ def component_node(state: CircuitState) -> dict[str, Any]:
         return _error("Component node requires architecture output.")
 
     try:
+        from external_devices import prepare_architecture, profile_row, add_interfaces
+        architecture = prepare_architecture(architecture, _requirements_from_state(state) or {})
         mods = _component_agent_modules()
         parser = mods["parser"]
         retriever = mods["retriever"]
@@ -334,13 +337,22 @@ def component_node(state: CircuitState) -> dict[str, Any]:
         for request in requests:
             request["build_quantity"] = build_quantity
 
-        retrieval_results = retriever.retrieve_all(requests)
+        retrieval_results = retriever.retrieve_all([r for r in requests if not r.get("external_key")])
         ranked_results = ranker.rank_all(retrieval_results)
         rows = bom_generator.generate(ranked_results)
+        selected = {r["reference"]: r for r in rows}
+        for request in requests:
+            if request.get("external_key"):
+                selected[request["reference"]] = profile_row(request, build_quantity)
+            else:
+                selected[request["reference"]]["node_id"] = request["node_id"]
+        rows = add_interfaces([selected[r["reference"]] for r in requests])
         summary = bom_generator.summary(rows)
 
         tmp_dir = Path(tempfile.gettempdir())
-        csv_path = tmp_dir / "circuitmind_bom.csv"
+        # Each job owns its CSV. A shared name could substitute another user's
+        # concurrently generated BOM between the component and PCB stages.
+        csv_path = tmp_dir / f"circuitmind_bom-{uuid.uuid4().hex}.csv"
         bom_generator.to_csv(rows, str(csv_path))
 
         logged = _append_shortlist_log(ranked_results, _project_name(state))
@@ -358,6 +370,7 @@ def component_node(state: CircuitState) -> dict[str, Any]:
 
     return {
         "current_node": "component",
+        "architecture": architecture,
         "bom": bom,
         "bom_csv_path": str(csv_path),
         **_append_message(
@@ -535,6 +548,7 @@ def _build_nets_from_architecture(
     architecture: dict[str, Any],
     references: list[str],
     categories: dict[str, str] | None = None,
+    node_references: dict[str, str] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Build schema-2.0 nets from the architecture graph.
 
@@ -553,7 +567,8 @@ def _build_nets_from_architecture(
         node_id = node.get("id")
         if not node_id:
             continue
-        ref = references[index] if index < len(references) else f"U{index + 1}"
+        ref = node_references.get(node_id) if node_references is not None else (references[index] if index < len(references) else f"U{index + 1}")
+        if not ref: continue
         ref_by_node_id[node_id] = ref
         category_by_ref[ref] = (node.get("data") or {}).get("category") or ""
 
@@ -650,14 +665,20 @@ def pcb_node(state: CircuitState) -> dict[str, Any]:
 
     if not rows:
         return _error("PCB node requires BOM rows.")
-    unmatched = [str(row.get("subsystem") or row.get("reference")) for row in rows if not row.get("mfr_part") or row.get("status") == "NO_MATCH"]
+    from external_devices import coverage_issues, board_graph, separate_power_nets
+    missing = coverage_issues(architecture, rows)
+    if missing:
+        return _error("Required devices are retained in the system BOM: " + "; ".join(missing))
+    unmatched = [str(row.get("subsystem") or row.get("reference")) for row in rows if not row.get("mfr_part") or row.get("status") in ("NO_MATCH", "SELECTION_REQUIRED")]
     if unmatched:
         return _error("PCB handoff needs suitable components for: " + ", ".join(unmatched) + ". Review the BOM; missing devices cannot be silently omitted.")
     if not csv_path:
         return _error("PCB node requires bom_csv_path from the Component Agent.")
 
-    references = [str(row.get("reference")) for row in rows if row.get("reference")]
-    nets, wireless_links = _build_nets_from_architecture(architecture, references)
+    copper_graph, reference_map = board_graph(architecture, rows)
+    references = [reference_map[n["id"]] for n in copper_graph["architecture_graph"]["nodes"] if n["id"] in reference_map]
+    nets, wireless_links = _build_nets_from_architecture(copper_graph, references, node_references=reference_map)
+    nets = separate_power_nets(nets, rows)
 
     try:
         generator = _eda_generator()
@@ -666,7 +687,11 @@ def pcb_node(state: CircuitState) -> dict[str, Any]:
             bom_csv_path=csv_path,
             net_connections=nets,
             schema_version=SCHEMA_VERSION_V2,
+            bom_rows=[row for row in rows if not row.get("external")],
         )
+        pcb_ir["external_components"] = [row for row in rows if row.get("external")]
+        pcb_ir["required_devices"] = architecture.get("required_devices", [])
+        pcb_ir["assembly_notes"] = [row["assembly"] for row in rows if row.get("assembly")]
     except Exception as exc:
         return _error(f"PCB Agent failed: {exc}")
 
@@ -1014,6 +1039,9 @@ def documentation_node(state: CircuitState) -> dict[str, Any]:
             f"- Components: {len(pcb_ir.get('components') or [])}",
             f"- Nets: {len(pcb_ir.get('nets') or [])}",
             f"- Layers: {(pcb_ir.get('constraints') or {}).get('layer_count', 'TBD')}",
+            "",
+            "## Required external devices and assembly",
+            "\n".join(f"- {row['reference']} {row.get('subsystem')}: {row.get('mfr_part')} → PCB {', '.join(row.get('pcb_references', []))}. {row.get('assembly', '')}" for row in rows if row.get("external")) or "- none",
             "",
             "## Validation issues",
             "\n".join(

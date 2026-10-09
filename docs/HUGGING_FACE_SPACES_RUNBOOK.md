@@ -122,7 +122,53 @@ The component ranker filters known function mismatches before price/stock
 scores are applied. Unsupported requirements return `NO_MATCH` with an
 explanation. The PCB handoff refuses missing BOM parts, and board retries
 recheck saved BOM descriptions for these mismatches. External probes, panels
-and batteries must be represented by suitable devices or explicit interfaces.
+and batteries must be retained as system devices with their PCB interfaces.
+
+### Required external devices — 9 October 2026
+
+For an unspecified student project requesting TDS, pH, battery and solar power,
+the component stage preserves all four requirements and uses documented defaults:
+
+| Required device | Default system part | Connection |
+|---|---|---|
+| TDS sensor | DFRobot SEN0244 probe + conditioner kit | Separate analog signal, supply and ground on a PCB header |
+| pH sensor | DFRobot SEN0161-V2 probe + conditioner kit | Separate analog signal, supply and ground on a PCB header |
+| Battery | Adafruit 353 protected 1S 3.7V pack | External charger BAT IN; remains a required physical purchase |
+| Solar panel | DFRobot FIT0601 panel with regulated 5V USB output | External charger USB IN; the raw panel output is not connected to PCB logic |
+
+An external DFR0559 charger/power module combines the selected battery and panel.
+Its regulated 5V output enters the PCB through a separate power header. A
+TLV75533PDBVR regulator supplies 3.3V logic; IN/EN and OUT are mapped separately,
+with local input/output capacitors. Header footprints are generic 2.54mm
+through-hole headers using the stated custom harness order, **not** direct
+Gravity/JST mating connectors. The sensor conditioner boards and probes are
+included in the external kit rather than simulated as unrelated ICs.
+
+Sources: [TDS kit](https://wiki.dfrobot.com/sen0244),
+[pH kit](https://wiki.dfrobot.com/sen0161-v2),
+[battery pack](https://www.adafruit.com/product/353),
+[regulated-output panel](https://www.dfrobot.com/product-1774.html),
+[power manager](https://wiki.dfrobot.com/dfr0559),
+[logic regulator](https://www.ti.com/lit/ds/symlink/tlv755p.pdf).
+
+These are explicit design assumptions, visible in the system BOM and assembly
+notes. The default pH kit is a lab/demonstration probe, not a continuous
+industrial monitor. Review selected peripheral supply/ADC limits, regulator
+dissipation, pump load and the overall power budget before fabrication. Prices
+and stock without a supplier quote stay unknown; the displayed sum is a priced
+subtotal, not the complete project cost.
+
+Explicit custom parts can be supplied using `requirements.external_device_choices`
+(keys `tds`, `ph`, `battery`, `solar`). Unsupported choices or specified custom
+power ratings stay in the BOM as `SELECTION_REQUIRED`, rather than being
+silently replaced by these defaults. A missing device, PCB port, charging path
+or sensor signal blocks completion. The PCB handoff carries `external_components`
+and `required_devices`; `system-assembly.json` accompanies the board outputs.
+
+Regenerate a previous failed design to replace its old component selections.
+Deploy the frontend changes to show device labels, assembly notes and interface
+paths; deploy the Node change to archive `system-assembly.json` alongside other
+artifacts in Atlas. No new environment variable is needed.
 
 The Node backend rejects an unwired PCB when the design requires nets, and
 releases the reservation for a zero-trace board. Deploy the Node changes to

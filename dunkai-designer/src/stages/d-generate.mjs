@@ -147,6 +147,21 @@ export async function generateStructured(design, brief, resolution, provider, wo
   }
 
   const stats = mappingStats(mapping)
+  for (const device of design.required_devices ?? []) {
+    const external = design.external_components.find((c) => c.node_id === device.node_id && c.external_key === device.key)
+    const refs = external?.pcb_references ?? []
+    for (const ref of refs) {
+      const component = design.components.find((c) => c.ref_id === ref)
+      const expectedPins = component?.board_profile === "student-sensor-3p" ? ["pin1", "pin2", "pin3"]
+        : component?.board_profile === "student-power-2p" ? ["pin1", "pin2"] : []
+      const open = mapping.members.filter((m) => m.ref_id === ref && !m.pins.length)
+      const lonely = Object.values(mapping.assignments[ref] ?? {}).filter((net) =>
+        Object.entries(mapping.assignments).filter(([other, pins]) => other !== ref && Object.values(pins).includes(net)).length === 0)
+      if (open.length || lonely.length || !mapping.assignments[ref] || expectedPins.some((pin) => !mapping.assignments[ref][pin])) {
+        throw new Error(`Required device ${device.label} has an incomplete PCB connection at ${ref}; its interface cannot be omitted`)
+      }
+    }
+  }
   // Connections left open because a part cannot do what the architecture asked
   // (a display on SPI): reported up, so the architecture can be revised.
   const mismatches = findMismatches(mapping, resolution.resolutions)

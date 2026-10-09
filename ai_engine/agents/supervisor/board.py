@@ -130,9 +130,15 @@ def stream_board(state: CircuitState, job_id: str) -> Generator[dict[str, Any], 
         return
     # Recheck saved BOMs as well: older runs labelled unrelated substitutes OK.
     from component_agent.suitability import mismatch
+    from external_devices import coverage_issues
     bom = state.get("bom") or {}
+    coverage = coverage_issues(state.get("architecture") or {}, bom.get("rows", []))
+    if coverage:
+        yield {"kind": "error", "error": "Required devices remain in the BOM, but the board handoff needs repair: " + "; ".join(coverage)}
+        return
     problems = []
     for row in bom.get("rows", []):
+        if row.get("external") or row.get("board_profile"): continue
         if row.get("description"):
             reason = mismatch(row, {"subsystem": row.get("subsystem", "")})
             if reason: problems.append(f"{row.get('reference')}: {row.get('subsystem')} ({row.get('mfr_part')})")

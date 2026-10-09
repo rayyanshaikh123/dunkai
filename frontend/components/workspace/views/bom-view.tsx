@@ -65,6 +65,13 @@ interface BomRow {
   lcsc?: string;
   stock?: string | number;
   status?: string;
+  status_reason?: string;
+  subsystem?: string;
+  external?: boolean;
+  assembly?: string;
+  pcb_references?: string[];
+  via_reference?: string;
+  source_url?: string;
 }
 
 interface BomData {
@@ -75,8 +82,10 @@ interface BomData {
   summary?:
     | {
         total_line_items?: number;
-        total_cost_usd?: number;
+        total_cost_usd?: number | null;
         unfilled_references?: string[];
+        cost_complete?: boolean;
+        unpriced_references?: string[];
       }
     | string;
 }
@@ -197,18 +206,24 @@ export function BOMView({ projectId }: BOMViewProps) {
   /** Both currencies are exported, so the file does not depend on the toggle. */
   const buildCsv = () =>
     [
-      ['Designator', 'Component', 'Qty', 'Category', 'Unit Cost (USD)', 'Unit Cost (INR)', 'Availability'].join(','),
+      ['Designator', 'Component', 'Subsystem', 'Placement', 'PCB Interfaces', 'Via', 'Qty', 'Category', 'Unit Cost (USD)', 'Unit Cost (INR)', 'Availability', 'Status', 'Notes'].join(','),
       ...rows.map((r) => {
         const unit = unitPriceUsd(r);
         return [
           r.reference ?? r.designator ?? '',
           r.mfr_part ?? r.component ?? r.part_number ?? '',
+          r.subsystem ?? '',
+          r.external ? 'External device' : 'PCB',
+          (r.pcb_references ?? []).join(' / '),
+          r.via_reference ?? '',
           String(quantityOf(r)),
           r.category ?? '',
           unit === null ? '' : unit.toFixed(2),
           unit === null ? '' : (unit * USD_TO_INR).toFixed(2),
           String(r.availability ?? r.stock ?? ''),
-        ].join(',');
+          r.status ?? '',
+          r.assembly ?? r.status_reason ?? '',
+        ].map((value) => `"${String(value).replace(/"/g, '""')}"`).join(',');
       }),
     ].join('\n');
 
@@ -310,6 +325,24 @@ export function BOMView({ projectId }: BOMViewProps) {
           )}
 
           {/* Summary Stats */}
+          {rows.some((row) => row.external) && (
+            <div className="rounded-lg border border-border bg-secondary/40 p-4 space-y-3">
+              <p className="text-sm font-semibold">Required external devices</p>
+              <p className="text-xs text-muted-foreground">Buy these devices along with the PCB parts. The board contains their connectors and interface circuits. Documented defaults are selected for a student project; review the listed electrical and assembly assumptions.</p>
+              {rows.filter((row) => row.external).map((row) => (
+                <div key={row.reference} className="text-xs space-y-1">
+                  <p className="font-medium">{row.subsystem} · {row.manufacturer} {row.mfr_part ?? 'Selection required'}
+                    {row.pcb_references?.length ? ` → ${row.via_reference ? `${row.via_reference} → ` : ''}PCB ${row.pcb_references.join(', ')}` : ''}
+                  </p>
+                  <p className="text-muted-foreground">{row.assembly ?? row.status_reason}</p>
+                  {row.source_url?.startsWith('https://') && <a className="text-accent underline" href={row.source_url} target="_blank" rel="noopener noreferrer">Manufacturer documentation</a>}
+                </div>
+              ))}
+            </div>
+          )}
+          {summaryObj?.cost_complete === false && (
+            <p className="text-xs text-muted-foreground">The cost below covers priced parts only. {summaryObj.unpriced_references?.length ?? 0} parts need supplier quotes; they are included in the BOM.</p>
+          )}
           <div className="grid grid-cols-3 gap-4">
             <div className="bg-secondary rounded-lg border border-border p-4">
               <p className="text-xs text-muted-foreground uppercase tracking-wider">Total Items</p>
@@ -317,7 +350,7 @@ export function BOMView({ projectId }: BOMViewProps) {
             </div>
             <div className="bg-secondary rounded-lg border border-border p-4">
               <p className="text-xs text-muted-foreground uppercase tracking-wider">
-                Estimated Cost ({currency})
+                {summaryObj?.cost_complete === false ? 'Priced subtotal' : 'Estimated cost'} ({currency})
               </p>
               <p className="text-2xl font-bold mt-1">{totalFormatted ?? '—'}</p>
             </div>
@@ -351,8 +384,10 @@ export function BOMView({ projectId }: BOMViewProps) {
                         {item.reference ?? item.designator ?? `#${idx + 1}`}
                       </TableCell>
                       <TableCell className="h-10 text-xs text-foreground">
-                        {item.mfr_part ?? item.part_number ?? item.component ?? '—'}
+                        {item.mfr_part ?? item.part_number ?? item.component ?? item.subsystem ?? 'Selection required'}
+                        {item.subsystem ? <span className="text-muted-foreground block text-[10px]">{item.subsystem}{item.external ? ' · External device' : ''}</span> : null}
                         {item.manufacturer ? <span className="text-muted-foreground block text-[10px]">{item.manufacturer}</span> : null}
+                        {item.status && item.status !== 'OK' && item.status !== 'DOCUMENTED_DEFAULT' ? <span className="text-amber-500 block text-[10px]">{item.status_reason ?? item.status}</span> : null}
                       </TableCell>
                       <TableCell className="h-10 text-xs text-muted-foreground text-right">
                         {quantityOf(item)}

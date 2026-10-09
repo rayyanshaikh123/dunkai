@@ -16,6 +16,7 @@ export interface BoardArtifact {
     boardGltfJson?: string
     designBrief?: string
     resolution?: string
+    systemAssembly?: string
   }
   sizes: Record<string, number>
   stats: {

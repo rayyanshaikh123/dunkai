@@ -262,7 +262,13 @@ async function main() {
     gerbersZip: rel(path.join(outputs.outDir, "gerbers.zip")),
     designBrief: "design-brief.md",
     resolution: "resolution.json",
+    systemAssembly: "system-assembly.json",
   }
+  await writeFile(path.join(workdir, "system-assembly.json"), JSON.stringify({
+    required_devices: design.required_devices, external_components: design.external_components,
+    assembly_notes: design.assembly_notes,
+    pcb_interfaces: design.components.filter((c) => c.device_reference),
+  }, null, 2))
   if (gltfStats) {
     files.boardGlb = rel(path.join(outputs.outDir, "board.glb"))
     files.boardGltfJson = rel(path.join(outputs.outDir, "board.gltf.json"))

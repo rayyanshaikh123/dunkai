@@ -52,43 +52,53 @@ class DynamicPCBIRGenerator:
         # identifier rather than re-deriving it from the MPN string.
         lcsc_col = next((c for c in ['lcsc', 'lcsc_part', 'jlcpcb_part'] if c in df.columns), None)
 
-        components = []
+        rows = []
         for _, row in df.iterrows():
             ref = str(row[ref_col]).strip()
             mpn = str(row[part_col]).strip()
             
             if not ref or ref == 'nan' or not mpn or mpn == 'nan':
-                continue
+                raise ValueError(f"Required BOM row {ref} has no part number; it cannot be omitted from the handoff")
 
             csv_package = str(row[pkg_col]).strip() if pkg_col and str(row[pkg_col]) != 'nan' else "CUSTOM"
             
-            # Query EasyEDA live API
-            meta = self.fetch_easyeda_metadata(mpn)
-            
-            # Priority: Live API Package -> CSV Package -> Default
-            final_package = meta["package"] if meta["package"] else csv_package
-
             lcsc = None
             if lcsc_col:
                 raw_lcsc = str(row[lcsc_col]).strip()
                 if raw_lcsc and raw_lcsc.lower() != 'nan':
                     lcsc = raw_lcsc
 
-            component = {
-                "ref_id": ref,
-                "part_class": str(row[cat_col]).lower().strip() if cat_col and str(row[cat_col]) != 'nan' else "ic",
-                "part_number": meta["mfr_part"],
-                "package": final_package,
-                "quantity": int(row[qty_col]) if qty_col and str(row[qty_col]).isdigit() else 1
-            }
+            component = {"reference": ref, "category": str(row[cat_col]).lower().strip() if cat_col and str(row[cat_col]) != 'nan' else "ic",
+                         "mfr_part": mpn, "package": csv_package,
+                         "build_quantity": int(row[qty_col]) if qty_col and str(row[qty_col]).isdigit() else 1}
             # OPTIONAL and additive: emitted only when actually known, so a BOM
             # without the column produces exactly the record shape as before and
             # downstream consumers that do not read it are unaffected.
             if lcsc:
                 component["lcsc"] = lcsc
 
+            rows.append(component)
+        return self.parse_bom_rows(rows)
+
+    def parse_bom_rows(self, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Selected BOM identity is authoritative; fuzzy web hits cannot replace it.
+
+        Physical resolution belongs to the designer. External device bodies are
+        carried separately by the supervisor along with their PCB port paths.
+        """
+        components = []
+        for row in rows:
+            ref = row.get("reference") or row.get("ref_id")
+            part = row.get("mfr_part") or row.get("part_number")
+            if not ref or not part or row.get("status") in ("NO_MATCH", "SELECTION_REQUIRED"):
+                raise ValueError(f"Required BOM row {ref} has no suitable part; it cannot be omitted")
+            if row.get("external"):
+                raise ValueError(f"{ref} is an external system device; pass its PCB interface, not a fictitious device footprint")
+            component = {"ref_id": ref, "part_class": str(row.get("category") or "ic").lower(),
+                         "part_number": part, "package": row.get("package") or "CUSTOM", "quantity": 1}
+            for key in ("lcsc", "board_profile", "required", "device_reference"):
+                if row.get(key) is not None: component[key] = row[key]
             components.append(component)
-            
         return components
 
     def validate_nets(self, components: List[Dict[str, Any]], nets: List[Dict[str, Any]]) -> List[str]:
@@ -124,14 +134,15 @@ class DynamicPCBIRGenerator:
         width_mm: float = 100.0,
         height_mm: float = 60.0,
         schema_version: str = "2.0",
+        bom_rows: List[Dict[str, Any]] | None = None,
     ) -> Dict[str, Any]:
 
-        components = self.parse_bom_csv(bom_csv_path)
+        components = self.parse_bom_rows(bom_rows) if bom_rows is not None else self.parse_bom_csv(bom_csv_path)
 
         # Check validation warnings
         warnings = self.validate_nets(components, net_connections)
-        for w in warnings:
-            print(w)
+        if warnings:
+            raise ValueError("; ".join(warnings))
 
         return {
             "schema_version": schema_version,

@@ -67,6 +67,14 @@ BOM_COLUMNS = [
     "description",
     "datasheet_url",
     "source_url",
+    "node_id",
+    "external",
+    "external_key",
+    "device_profile",
+    "board_profile",
+    "pcb_references",
+    "via_reference",
+    "assembly",
 ]
 
 # Plain-English explanation for each non-OK status, shown alongside the
@@ -400,7 +408,7 @@ class BOMGenerator:
         total_cost = sum(
             r["extended_price_usd"] for r in rows if r.get("extended_price_usd") is not None
         )
-        unfilled = [r["reference"] for r in rows if r["status"] == "NO_MATCH"]
+        unfilled = [r["reference"] for r in rows if r["status"] in ("NO_MATCH", "SELECTION_REQUIRED")]
         flagged = [
             r["reference"] for r in rows
             if r["status"] not in ("OK", "NO_MATCH")
@@ -421,10 +429,13 @@ class BOMGenerator:
 
         return {
             "total_line_items": len(rows),
-            "total_cost_usd": round(total_cost, 2),
+            "total_cost_usd": round(total_cost, 2) if any(r.get("extended_price_usd") is not None for r in rows) else None,
             "unfilled_references": unfilled,
             "flagged_references": flagged,
             "shared_part_groups": shared_part_groups,
+            "external_references": [r["reference"] for r in rows if r.get("external")],
+            "unpriced_references": [r["reference"] for r in rows if r.get("extended_price_usd") is None],
+            "cost_complete": all(r.get("extended_price_usd") is not None for r in rows),
         }
 
 

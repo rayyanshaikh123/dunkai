@@ -157,6 +157,10 @@ protection IC, controller, ADC or interface. Specify an external-device
 connector and the appropriate signal-conditioning/interface electronics when
 the physical device is external. Do not assign I2C or SPI to every sensor by
 default: analog probes need analog conditioning/ADC and external connections.
+Retain the actual physical device as its own subsystem when it is explicitly
+required: a TDS probe, pH probe, battery or solar panel must never disappear
+merely because you added a connector, charger or conditioner. The full system
+BOM includes off-board devices as well as PCB-mounted electronics.
 --------------------------------------------------
 # IMPORTANT RULES
 Only include electronic subsystems.

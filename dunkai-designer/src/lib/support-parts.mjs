@@ -74,6 +74,12 @@ export function supportParts(design, resolutions, mapping) {
     const { supply, ground } = railsOf(ref)
     const gnd = ground ?? defaultGround
     if (!supply.length || !gnd) continue
+    if (res.component.board_profile === "tlv75533-dbv") {
+      for (const pin of ["pin1", "pin5"]) {
+        const net = mapping.assignments[ref]?.[pin]
+        if (net) add(PASSIVES.bulk, { pin1: net, pin2: gnd }, ref, `local input/output capacitor for ${ref}.${pin}; TI requires at least 1uF effective capacitance`)
+      }
+    }
     for (const [pin, net] of supply.slice(0, MAX_DECOUPLING_PER_PART)) {
       add(PASSIVES.decoupling, { pin1: net, pin2: gnd }, ref, `decoupling for ${ref}.${pin} on ${net}`)
     }
