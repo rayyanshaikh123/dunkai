@@ -1,27 +1,12 @@
 import { spawnSync } from 'node:child_process'
-import { readFile } from 'node:fs/promises'
+import { readFile, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildOutputs } from '../stages/e-outputs.mjs'
+import { stage } from './events.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 const worker = path.join(root, 'src', 'stages', 'e-worker.mjs')
-
-/** Blank lines from compiler dependencies are not protocol events. */
-export function parseEvaluatorOutput(stdout, onStage = () => {}) {
-  let summary
-  for (const line of stdout.split('\n')) {
-    if (!line.trim()) continue
-    let event
-    try { event = JSON.parse(line) }
-    catch { throw new Error('Isolated board evaluator returned incomplete or invalid JSON') }
-    if (event?.ev === 'sandbox_result') summary = event
-    else if (event?.ev === 'stage') onStage(event)
-    else throw new Error('Unexpected output from isolated board evaluator')
-  }
-  if (!summary) throw new Error('Isolated board evaluator returned no result')
-  return summary
-}
 
 /** Evaluate generated TSX under a checked, fail-closed Linux sandbox. */
 export async function buildOutputsIsolated(workdir, opts = {}) {
@@ -46,6 +31,9 @@ export async function buildOutputsIsolated(workdir, opts = {}) {
     ? [path.join(root, 'sandbox', 'launch.py'), 'run', process.execPath, root, workdir,
        worker, workdir]
     : sandbox
+  const manifest = path.join(workdir, '.sandbox-result.json')
+  await rm(manifest, { force: true })
+  stage('E', 'running', 'Compiling in the isolated board sandbox')
   const child = spawnSync(command, arguments_, {
     cwd: root,
     env: { PATH: '/usr/local/bin:/usr/bin:/bin' },
@@ -55,14 +43,15 @@ export async function buildOutputsIsolated(workdir, opts = {}) {
     throw new Error(`Isolated board evaluation failed: ${child.error?.message || child.stderr?.slice(-500) || child.status}`)
   }
   let summary
-  try { summary = parseEvaluatorOutput(child.stdout, event => process.stdout.write(JSON.stringify(event) + '\n')) }
-  catch (error) {
-    throw new Error(`${error.message} (exit ${child.status}, stdout ${child.stdout.length} bytes). ${child.stderr?.slice(-1000) || 'No compiler diagnostics.'}`)
-  }
-  if (summary.outDir !== path.join(workdir, 'dist')) throw new Error('Isolated board evaluator returned an invalid output directory')
+  try { summary = JSON.parse(await readFile(manifest, 'utf8')) }
+  catch { throw new Error(`Isolated board evaluator did not commit a complete result. ${child.stderr?.slice(-500) || 'Retry PCB generation from the BOM.'}`) }
+  if (summary?.ev !== 'sandbox_result' || summary.outDir !== path.join(workdir, 'dist')) throw new Error('Isolated board evaluator returned an invalid result')
   let circuitJson
   try { circuitJson = JSON.parse(await readFile(path.join(workdir, 'dist', 'circuit.json'), 'utf8')) }
   catch { throw new Error('Isolated board evaluator did not produce a complete circuit.json file') }
   if (!Array.isArray(circuitJson) || !circuitJson.length) throw new Error('Isolated board evaluator produced an empty circuit')
+  const errors = circuitJson.filter(e => typeof e.type === 'string' && e.type.includes('error')).length
+  if (summary.stats?.elements !== circuitJson.length || summary.stats?.errors !== errors) throw new Error('Isolated board evaluator returned inconsistent circuit statistics')
+  stage('E', 'done', `${summary.stats.components} components · ${summary.stats.traces} traces · ${errors} error(s)`)
   return { circuitJson, outDir: summary.outDir, stats: summary.stats }
 }

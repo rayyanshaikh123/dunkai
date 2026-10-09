@@ -104,6 +104,31 @@ The uploader sets the Space secrets from ignored local files. The allowlist excl
 
 ## 4. PCB sandbox readiness
 
+### Compiler completion fix — 9 October 2026
+
+The hosted sandbox can finish compilation and write artifacts while returning
+an empty stdout stream with exit code 0. Parsing that stream as JSON caused
+`Unexpected end of JSON input`; requiring an stdout event then caused
+`Isolated board evaluator returned no result`.
+
+The worker now commits `.sandbox-result.json` atomically after its outputs are
+written. The parent deletes the previous manifest before every build, checks
+the process exit status, validates the new manifest and output directory, and
+checks its element/error counts against the actual `circuit.json`. Sandbox
+enforcement remains enabled. Compiler progress is emitted by the parent.
+
+The deployed fix completed the saved water-purifier BOM: 27 PCB traces, zero
+compiler DRC errors, schematic/PCB SVGs, manufacturing outputs and a 3D model.
+That BOM still has three unresolved components and two signal mismatches;
+zero DRC errors do not establish a complete or electrically valid design.
+
+PCB settings now default to **Auto · chat model**. The exact model accepted
+for the chat pipeline is passed to board generation, including Groq and GPT
+mini selections. New pipeline selections are saved on the chat for reloads
+and retries. Old browser PCB preferences are replaced by Auto on the first
+updated visit; users can explicitly choose a PCB override in Settings.
+Deploy the corresponding Node and frontend changes to activate this setting.
+
 ```sh
 curl https://rayyanshk-dunkai.hf.space/health
 python deploy/check_huggingface.py

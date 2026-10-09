@@ -131,6 +131,7 @@ def confine(node, designer, work, scratch):
 
 
 def execute(node, designer, work, arguments):
+    print("PCB sandbox: preparing isolated compiler", file=sys.stderr, flush=True)
     node, designer, work = (str(Path(value).resolve(strict=True)) for value in (node, designer, work))
     # Scratch is private to this evaluator, and cannot contain any host secrets.
     scratch = tempfile.mkdtemp(prefix=".sandbox-", dir=work)
@@ -142,6 +143,7 @@ def execute(node, designer, work, arguments):
     environment = {"PATH": "/usr/bin:/bin", "HOME": scratch, "TMPDIR": scratch, "NODE_ENV": "production", "OPENSSL_CONF": "/dev/null"}
     os.environ.clear(); os.environ.update(environment)
     confine(node, designer, work, scratch)
+    print("PCB sandbox: restrictions applied; starting Node", file=sys.stderr, flush=True)
     os.execve(node, [node, "--max-old-space-size=1024", *arguments], environment)
 
 

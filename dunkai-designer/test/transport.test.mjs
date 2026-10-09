@@ -1,15 +1,38 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createOpenAICompatibleProvider } from '../src/providers/openai-compatible.mjs'
-import { parseEvaluatorOutput } from '../src/lib/isolated-build.mjs'
+import { buildOutputsIsolated } from '../src/lib/isolated-build.mjs'
+import { mkdtemp, writeFile, rm, readFile } from 'node:fs/promises'
+import path from 'node:path'
+import os from 'node:os'
 
-test('sandbox protocol tolerates blank compiler lines and still forwards progress', () => {
-  const stages = []
-  const summary = { ev: 'sandbox_result', outDir: '/data/boards/design/dist', stats: { errors: 0 } }
-  assert.deepEqual(parseEvaluatorOutput('\n{"ev":"stage","stage":"E"}\n\n  \n' + JSON.stringify(summary) + '\n', e => stages.push(e)), summary)
-  assert.deepEqual(stages, [{ ev: 'stage', stage: 'E' }])
-  assert.throws(() => parseEvaluatorOutput('\n \n'), /returned no result/)
-  assert.throws(() => parseEvaluatorOutput('{"ev":"sandbox_result"'), /incomplete or invalid JSON/)
+test('real compiler completion survives discarded stdout; a subsequent no-op cannot reuse the previous result', async () => {
+  const work = await mkdtemp(path.join(os.tmpdir(), 'dunkai-compiler-test-'))
+  const original = { ...process.env }
+  const launcher = path.join(work, 'silent-launcher.mjs')
+  // Only the test substitutes a launcher: production continues to enforce
+  // Landlock/seccomp. Reproduce its lost stdout using the real PCB compiler.
+  await writeFile(launcher, `#!${process.execPath}\nimport {spawnSync} from 'node:child_process';
+const [node, root, work, worker] = process.argv.slice(4);
+const result = spawnSync(node, [worker, work], {cwd: root, stdio: ['ignore', 'ignore', 'pipe']});
+process.stderr.write(result.stderr || ''); process.exit(result.error ? 1 : result.status);`, { mode: 0o700 })
+  await writeFile(path.join(work, 'index.tsx'), 'export default () => <board width="20mm" height="20mm"><resistor name="R1" resistance="1k" footprint="0402" /></board>')
+  Object.assign(process.env, { BOARD_SANDBOX_REQUIRED: 'true', BOARD_SANDBOX_BACKEND: 'landlock-seccomp', BOARD_SANDBOX_PYTHON: launcher })
+  try {
+    const result = await buildOutputsIsolated(work)
+    assert.equal(result.stats.components, 1)
+    assert.equal(result.stats.errors, 0)
+    assert.ok(result.circuitJson.some(e => e.type === 'pcb_board'))
+    assert.match(await readFile(path.join(work, 'dist', 'pcb.svg'), 'utf8'), /<svg/)
+    await writeFile(launcher, `#!${process.execPath}\nprocess.exit(0);`)
+    await assert.rejects(buildOutputsIsolated(work), /did not commit a complete result/)
+  } finally {
+    for (const key of ['BOARD_SANDBOX_REQUIRED', 'BOARD_SANDBOX_BACKEND', 'BOARD_SANDBOX_PYTHON']) {
+      if (original[key] === undefined) delete process.env[key]
+      else process.env[key] = original[key]
+    }
+    await rm(work, { recursive: true, force: true })
+  }
 })
 
 test('empty and truncated provider responses retry using the same provider, model and key', async () => {
