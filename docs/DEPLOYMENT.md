@@ -60,6 +60,20 @@ A common split: **Vercel** for the frontend, **Render / Railway / Fly.io** for t
 
 Point `GOOGLE_REDIRECT_URI` at the **frontend's** origin — `https://app.example.com/api/v1/auth/google/callback` — so the rewrite carries the callback to the backend and the auth cookies are set on the site's own domain. Register the same URL in Google Cloud Console.
 
+For the current hosted site, use `https://dunkai.vercel.app/api/v1/auth/google/callback`.
+Start sign-in through the same frontend (`/api/v1/auth/google`). A ten-minute
+HttpOnly cookie binds the callback to the browser, and the ID token must match
+the OAuth nonce. Do not mix a frontend sign-in URL with a backend callback URL:
+the browser will not send the state cookie to the other hostname. Locally,
+use `http://localhost:3000/api/v1/auth/google/callback` with the frontend rewrite.
+
+The backend verifies the Google ID token's signature, audience, issuer, expiry,
+nonce, and `email_verified` claim. Google account IDs (`sub`) identify returning
+users. Verified Gmail and Google Workspace mailboxes are verified automatically;
+third-party mailboxes require the application's email verification flow and
+cannot automatically link to an existing password account. No additional email
+provider or environment variable is needed for Gmail/Workspace verification.
+
 ## How auth works across two domains
 
 API calls go through the frontend's `/api` rewrite, so auth cookies are first-party on the frontend's domain. The Socket.io connection goes straight to the backend, a different origin, where those cookies are not sent. So the browser fetches a two-minute, socket-only token from `GET /api/v1/auth/socket-token` and presents it in the handshake. The token is refused as an API credential.

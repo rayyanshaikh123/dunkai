@@ -26,7 +26,10 @@ function AuthCallbackContent() {
         // The backend already set auth cookies during the redirect
         // Refresh the user state and go to workspace
         await refreshUser()
-        router.push('/workspace')
+        const verificationEmail = searchParams.get('verify_email')
+        router.push(verificationEmail
+          ? `/verify-email?email=${encodeURIComponent(verificationEmail)}&reason=google`
+          : '/workspace')
       } else {
         setError('Authentication failed. Please try again.')
       }

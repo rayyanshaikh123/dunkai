@@ -63,7 +63,7 @@ export const env = Object.freeze({
   googleClientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
   googleRedirectUri: required(
     'GOOGLE_REDIRECT_URI',
-    'http://localhost:4000/api/v1/auth/google/callback'
+    'http://localhost:3000/api/v1/auth/google/callback'
   ),
 
   // Frontend / CORS

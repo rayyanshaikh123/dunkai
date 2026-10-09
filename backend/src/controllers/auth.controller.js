@@ -3,6 +3,9 @@ import { send } from '../utils/response.js';
 import * as service from '../services/auth.service.js';
 import { setAuthCookies, clearAuthCookies, extractTokensFromCookies, signSocketToken } from '../utils/tokens.js';
 import { env } from '../config/env.js';
+import {
+  GOOGLE_STATE_COOKIE, googleStateCookieOptions, createGoogleState, isValidGoogleState,
+} from '../utils/googleOAuth.js';
 
 // Helper: set cookies if the request came from a browser (Origin header matches frontend)
 const shouldSetCookies = (req) => {
@@ -89,24 +92,39 @@ export const resendVerification = asyncHandler(async (req, res) => {
 // ---- Google OAuth ----
 
 export const googleAuth = asyncHandler(async (req, res) => {
-  const url = service.getGoogleAuthUrl();
+  const state = createGoogleState();
+  const url = service.getGoogleAuthUrl(state);
+  res.cookie(GOOGLE_STATE_COOKIE, state, { ...googleStateCookieOptions, maxAge: 10 * 60 * 1000 });
   res.redirect(url);
 });
 
 export const googleCallback = asyncHandler(async (req, res) => {
-  const { code, error } = req.query;
-  if (error) {
-    return res.redirect(`${env.clientOrigin}/login?error=${encodeURIComponent(error)}`);
+  const { code, error, state } = req.query;
+  const expectedState = req.cookies?.[GOOGLE_STATE_COOKIE];
+  res.clearCookie(GOOGLE_STATE_COOKIE, googleStateCookieOptions);
+  const failure = (message) => res.redirect(`${env.clientOrigin}/auth/callback?error=${encodeURIComponent(message)}`);
+  if (!isValidGoogleState(state, expectedState)) {
+    return failure('Google sign-in has expired or did not start in this browser. Please try again.');
   }
-  if (!code) {
-    return res.redirect(`${env.clientOrigin}/login?error=no_code`);
+  if (error) {
+    return failure(error === 'access_denied' ? 'Google sign-in was cancelled.' : 'Google sign-in failed. Please try again.');
+  }
+  if (typeof code !== 'string' || !code) {
+    return failure('Google did not return a sign-in code. Please try again.');
   }
 
-  const data = await service.handleGoogleCallback(code, req);
+  let data;
+  try {
+    data = await service.handleGoogleCallback(code, req, { nonce: state });
+  } catch (err) {
+    if (err.isOperational && err.statusCode < 500) return failure(err.message);
+    throw err;
+  }
   // Set cookies and redirect to frontend
   setAuthCookies(res, data.accessToken, data.refreshToken);
 
   // Redirect to frontend with success indicator
-  const redirectUrl = `${env.clientOrigin}/auth/callback?success=true`;
+  const verification = data.user.isVerified ? '' : `&verify_email=${encodeURIComponent(data.user.email)}`;
+  const redirectUrl = `${env.clientOrigin}/auth/callback?success=true${verification}`;
   res.redirect(redirectUrl);
 });

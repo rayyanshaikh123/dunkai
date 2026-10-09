@@ -33,7 +33,10 @@ def main():
         'DISABLE_CREDITS_FOR_TESTING': 'false',
         'FRONTEND_URL': 'https://dunkai.vercel.app',
         'CLIENT_ORIGIN': 'https://dunkai.vercel.app',
+        'GOOGLE_REDIRECT_URI': 'https://dunkai.vercel.app/api/v1/auth/google/callback',
     }
+    for name in ('GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET'):
+        if backend.get(name): settings[name] = backend[name]
     for name in ('EMAIL_HOST', 'EMAIL_PORT', 'EMAIL_USER', 'EMAIL_PASS', 'EMAIL_FROM'):
         if backend.get(name): settings[name] = backend[name]
     for name, value in settings.items(): set_key(backend_path, name, value, quote_mode='never')

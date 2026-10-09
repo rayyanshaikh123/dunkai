@@ -5,6 +5,7 @@ import { Session } from '../models/Session.js';
 import { ActivityLog } from '../models/ActivityLog.js';
 import { ApiError } from '../utils/ApiError.js';
 import { sendPasswordResetEmail, sendVerificationEmail } from '../helpers/email.js';
+import { verifyGoogleIdentity } from '../utils/googleOAuth.js';
 import {
   hashToken,
   signAccessToken,
@@ -252,7 +253,13 @@ export const resendVerification = async (email) => {
 
 // ---- Google OAuth ----
 
-export const getGoogleAuthUrl = () => {
+export const getGoogleAuthUrl = (state) => {
+  if (!env.googleClientId || !env.googleClientSecret) {
+    throw ApiError.badRequest('Google OAuth is not configured on the server');
+  }
+  if (typeof state !== 'string' || !/^[a-f0-9]{64}$/.test(state)) {
+    throw ApiError.badRequest('Google sign-in must start from the sign-in page');
+  }
   const params = new URLSearchParams({
     client_id: env.googleClientId,
     redirect_uri: env.googleRedirectUri,
@@ -260,13 +267,18 @@ export const getGoogleAuthUrl = () => {
     scope: 'openid email profile',
     access_type: 'offline',
     prompt: 'consent',
+    state,
+    nonce: state,
   });
   return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
 };
 
-export const handleGoogleCallback = async (code, req = null) => {
+export const handleGoogleCallback = async (code, req = null, { nonce } = {}) => {
   if (!env.googleClientId || !env.googleClientSecret) {
     throw ApiError.badRequest('Google OAuth is not configured on the server');
+  }
+  if (typeof code !== 'string' || !code || typeof nonce !== 'string' || !nonce) {
+    throw ApiError.unauthorized('Google sign-in must start from the sign-in page');
   }
 
   // Exchange code for tokens
@@ -288,37 +300,46 @@ export const handleGoogleCallback = async (code, req = null) => {
   }
 
   const tokenData = await tokenRes.json();
+  const googleUser = await verifyGoogleIdentity(tokenData.id_token, nonce);
 
-  // Get user info from Google
-  const userRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-    headers: { authorization: `Bearer ${tokenData.access_token}` },
-  });
-
-  if (!userRes.ok) throw ApiError.unauthorized('Failed to fetch Google user info');
-
-  const googleUser = await userRes.json();
-
-  // Find or create user
-  let user = await User.findOne({ email: googleUser.email });
+  // Google emails can change. Returning users belong to the stable subject,
+  // never to whichever account happens to have their current Google email.
+  let user = await User.findOne({ googleId: googleUser.sub });
   if (!user) {
+    user = await User.findOne({ email: googleUser.email });
+    if (user?.googleId && user.googleId !== googleUser.sub) {
+      throw ApiError.unauthorized('This email is linked to a different Google account. Sign in using the original account.');
+    }
+    if (user && !googleUser.emailAuthoritative) {
+      throw ApiError.unauthorized('Sign in with your existing password. Google cannot verify ownership of this third-party email address for account linking.');
+    }
+  }
+  if (user && !user.isActive) throw ApiError.forbidden('Account is deactivated');
+
+  if (!user) {
+    const name = googleUser.name.trim() || googleUser.email.split('@')[0];
     user = await User.create({
-      name: googleUser.name || googleUser.email.split('@')[0],
+      name: name.length >= 2 ? name.slice(0, 100) : 'Google user',
       email: googleUser.email,
       avatar: googleUser.picture || '',
       provider: 'google',
       googleId: googleUser.sub,
-      isVerified: true, // Google-verified email
+      isVerified: googleUser.emailAuthoritative,
     });
   } else if (!user.googleId) {
     // Link existing account to Google
     user.googleId = googleUser.sub;
     user.provider = user.provider === 'local' ? 'local' : 'google';
     if (googleUser.picture && !user.avatar) user.avatar = googleUser.picture;
-    user.isVerified = true;
-    await user.save();
   }
 
-  if (!user.isActive) throw ApiError.forbidden('Account is deactivated');
+  // Verify only the application's stored email, not another address now
+  // attached to the same Google account. Preserve prior mailbox verification.
+  if (googleUser.emailAuthoritative && user.email === googleUser.email) {
+    user.isVerified = true;
+    user.emailVerificationToken = undefined;
+    user.emailVerificationExpires = undefined;
+  }
 
   user.lastLogin = new Date();
   await user.save();

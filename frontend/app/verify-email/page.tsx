@@ -12,6 +12,7 @@ function VerifyEmailContent() {
   const params = useSearchParams()
   const token = params.get('token') || ''
   const email = params.get('email') || ''
+  const googleMailboxCheck = !token && params.get('reason') === 'google'
   const [status, setStatus] = useState<'waiting' | 'checking' | 'verified' | 'error'>(token ? 'checking' : 'waiting')
   const [message, setMessage] = useState('')
   const [resending, setResending] = useState(false)
@@ -40,7 +41,7 @@ function VerifyEmailContent() {
 
   return (
     <AuthShell eyebrow="Account verification" title={status === 'verified' ? 'Email verified' : 'Verify your email'}
-      description={status === 'verified' ? 'Your trial credits and hosted chat allowance are now available when billing is enabled.' : 'Open the link sent to your email. It expires after 24 hours.'}>
+      description={status === 'verified' ? 'Your five free design chats are now available.' : googleMailboxCheck ? 'Google does not manage this mailbox. Send a verification link to confirm you own it.' : 'Open the link sent to your email. It expires after 24 hours.'}>
       <div className="space-y-4 text-sm">
         {status === 'checking' && <p className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />Verifying…</p>}
         {message && <p className="rounded-xl bg-secondary p-3">{message}</p>}
@@ -48,7 +49,7 @@ function VerifyEmailContent() {
           <Button className="w-full" onClick={() => window.location.assign('/workspace')}>Continue to workspace</Button>
         ) : (
           <>
-            {email && <Button type="button" variant="outline" className="w-full" disabled={resending} onClick={resend}>{resending ? 'Sending…' : 'Resend verification email'}</Button>}
+            {email && <Button type="button" variant="outline" className="w-full" disabled={resending} onClick={resend}>{resending ? 'Sending…' : googleMailboxCheck ? 'Send verification email' : 'Resend verification email'}</Button>}
             <Button asChild variant="ghost" className="w-full"><Link href="/login">Back to login</Link></Button>
           </>
         )}
