@@ -64,6 +64,16 @@ test('a zero credit balance restricts AI execution but allows unlimited new chat
   assert.equal(await Chat.countDocuments({ user: a.user._id }), 13);
 });
 
+test('a completed response with zero PCB traces releases credits rather than charging for an unwired board', async () => {
+  const a = await account(), chat = await conversation(a)
+  await reserveCharge(a.user, 'unwired-board-response', { ...request(chat, 'generate_board'), byok: true })
+  await settleCharge('unwired-board-response', { board: { ...board.board, stats: { errors: 0, traces: 0 } } })
+  const charge = await AiCharge.findOne({ jobId: 'unwired-board-response' })
+  assert.equal(charge.status, 'released')
+  assert.equal(charge.debitedCredits, 0)
+  assert.equal((await walletSummary(a.user)).available, 500)
+})
+
 test('old monthly entitlements cannot waive credits for newly started work', async () => {
   const a = await account(), chat = await conversation(a);
   await Chat.updateOne({ _id: chat._id }, { $set: { freeDesign: { period: currentCreditPeriod(), completedActions: [], successfulRequests: 1 } } });

@@ -2,9 +2,31 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createOpenAICompatibleProvider } from '../src/providers/openai-compatible.mjs'
 import { buildOutputsIsolated } from '../src/lib/isolated-build.mjs'
+import { generateStructured } from '../src/stages/d-generate.mjs'
 import { mkdtemp, writeFile, rm, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
+
+test('provider billing failures stop immediately and cannot turn into a completed unwired board', async () => {
+  const originalFetch = globalThis.fetch, originalKey = process.env.OPENAI_API_KEY
+  process.env.OPENAI_API_KEY = 'test-key'
+  let calls = 0
+  globalThis.fetch = async () => { calls++; return Response.json({ error: { type: 'insufficient_quota', code: 'credit_balance_exhausted' } }, { status: 429 }) }
+  const work = await mkdtemp(path.join(os.tmpdir(), 'dunkai-quota-test-'))
+  try {
+    const provider = createOpenAICompatibleProvider('openai', { model: 'gpt-4.1-mini' })
+    const components = ['U1', 'U2'].map(ref_id => ({ ref_id, part_number: 'MCU123', package: 'SOT-23-6' }))
+    const design = { components, nets: [{ name: 'VDD', interface: 'Power', net_class: 'power', members: components.map(c => ({ ref_id: c.ref_id, role: 'SUPPLY' })) }], constraints: { board_outline: { width_mm: 20, height_mm: 20 } } }
+    const resolution = { resolutions: components.map(component => ({ component, ok: true, padCount: 6, footprinter: 'sot23_6' })) }
+    await assert.rejects(generateStructured(design, '', resolution, provider, work), /Pin mapping failed: OpenAI API credits or spending limit are exhausted/)
+    assert.equal(calls, 1)
+  } finally {
+    globalThis.fetch = originalFetch
+    if (originalKey === undefined) delete process.env.OPENAI_API_KEY
+    else process.env.OPENAI_API_KEY = originalKey
+    await rm(work, { recursive: true, force: true })
+  }
+})
 
 test('real compiler completion survives discarded stdout; a subsequent no-op cannot reuse the previous result', async () => {
   const work = await mkdtemp(path.join(os.tmpdir(), 'dunkai-compiler-test-'))

@@ -36,6 +36,7 @@ import catalogue
 import config
 import coverage
 import utils
+import suitability
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
 logger = logging.getLogger(__name__)
@@ -393,7 +394,12 @@ class ComponentRanker:
         returned by ComponentRetriever.retrieve()).
         """
         request = retrieval_result.get("request", {})
-        candidates = retrieval_result.get("candidates", [])
+        offered = retrieval_result.get("candidates", [])
+        rejected = [{"mfr_part": utils.get_mfr_part(c), "reason": suitability.mismatch(c, request)} for c in offered]
+        rejected = [r for r in rejected if r["reason"]]
+        candidates = [c for c in offered if suitability.mismatch(c, request) is None]
+        if offered and not candidates:
+            request["match_issue"] = f"No catalogue candidate proves the required function for {request.get('subsystem', 'this subsystem')}. Specify a suitable component or an explicit external-device interface."
         build_qty = _get_build_quantity(request)
 
         unit_prices = [utils.get_unit_price(c, build_qty) for c in candidates]
@@ -415,6 +421,7 @@ class ComponentRanker:
         return {
             **retrieval_result,
             "ranked_candidates": scored,
+            "function_rejections": rejected,
             "best_candidate": scored[0] if scored else None,
         }
 
@@ -425,6 +432,9 @@ class ComponentRanker:
 
         for result in retrieval_results:
             ranked = self.rank(result)
+            if not ranked["ranked_candidates"]:
+                ranked_results.append(ranked)
+                continue
 
             unused = [c for c in ranked["ranked_candidates"] if utils.get_mfr_part(c) not in selected_parts]
             chosen = self._first_orderable(unused, ranked)

@@ -325,6 +325,10 @@ export const persistBoardState = async (project, chatId, result, audit, jobId, s
   const componentsReplaced = Boolean((result.bom && !isDeepStrictEqual(result.bom, project?.bom)) || (result.pcb_ir && !isDeepStrictEqual(result.pcb_ir, project?.pcb_ir)));
   const inheritedBoard = hasBoard && isDeepStrictEqual(board, project?.board);
   if (inheritedBoard && componentsReplaced) { result.board = {}; board = null; hasBoard = false; }
+  const expectedNets = (result.pcb_ir || project?.pcb_ir)?.nets;
+  if (hasBoard && !inheritedBoard && board.stats?.traces === 0 && Array.isArray(expectedNets) && expectedNets.length) {
+    throw ApiError.badGateway('The engine returned an unwired PCB. No completed board was saved; verify the BOM and provider API balance before retrying.');
+  }
   const artifactKeys = [
     'requirements', 'architecture', 'bom', 'eda_data', 'pcb_ir', 'validation',
     'handoff_validation', 'documentation', 'code_generation',

@@ -151,6 +151,12 @@ You will receive HardwareRequirements JSON.
 # GOAL
 Infer all required electronic subsystems.
 The output should represent ONLY purchasable electronic building blocks.
+Distinguish external devices from the electronics on the PCB. A battery cell,
+solar panel, chemical probe or physical sensor is not interchangeable with its
+protection IC, controller, ADC or interface. Specify an external-device
+connector and the appropriate signal-conditioning/interface electronics when
+the physical device is external. Do not assign I2C or SPI to every sensor by
+default: analog probes need analog conditioning/ADC and external connections.
 --------------------------------------------------
 # IMPORTANT RULES
 Only include electronic subsystems.

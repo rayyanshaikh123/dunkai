@@ -24,8 +24,8 @@ export const BOARD_PROVIDERS: readonly BoardProvider[] = [
     id: 'openai',
     provider: 'openai',
     model: 'gpt-4.1',
-    label: 'GPT-4.1',
-    hint: 'PCB generation using your OpenAI API key.',
+    label: 'OpenAI',
+    hint: 'Uses your selected GPT chat model and OpenAI key. Auto follows any chat provider.',
     byok: 'openai',
   },
   {
@@ -120,5 +120,10 @@ export const boardProviderRequest = (
   if (id === 'auto') return { provider: 'auto', ...(chatModel ? { model: chatModel } : {}) }
   const option = BOARD_PROVIDERS.find((p) => p.id === id)
   if (!option) return boardProviderRequest('auto', chatModel)
+  // Selecting a provider must not reset GPT mini to GPT-4.1, or Groq 20B to
+  // 120B. An explicit override within the chat's provider keeps its model.
+  if (chatModel && ((id === 'openai' && chatModel.startsWith('gpt-')) || (id === 'groq' && !chatModel.startsWith('gpt-')))) {
+    return { provider: option.provider, model: chatModel }
+  }
   return option.model ? { provider: option.provider, model: option.model } : { provider: option.provider }
 }

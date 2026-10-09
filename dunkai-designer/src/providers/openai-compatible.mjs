@@ -137,10 +137,19 @@ function createClient(target, { model, timeoutMs, maxTokens }) {
         retryAfter = res.headers.get("retry-after")
 
         if (!res.ok) {
+          let providerError
+          try { providerError = JSON.parse(raw)?.error } catch {}
+          const billingCodes = ['insufficient_quota', 'credit_balance_exhausted', 'organization_spend_limit_exceeded', 'project_spend_limit_exceeded', 'billing_hard_limit_reached', 'usage_limit_reached']
+          if (billingCodes.includes(providerError?.code) || providerError?.type === 'insufficient_quota') {
+            const error = new Error(`${cfg.label} API credits or spending limit are exhausted. Check your provider's API billing account. DunkAI credits do not fund a BYOK provider account.`)
+            error.code = 'PROVIDER_BILLING'
+            throw error
+          }
           // 402 ("not included in your free usage") and 404 (no such model) are
           // account facts, not weather: retrying wastes time and the message
           // has to reach the user unchanged.
-          lastError = new Error(`${cfg.label} HTTP ${res.status}: ${raw.slice(0, 400)}`)
+          const detail = typeof providerError?.message === 'string' ? providerError.message.replace(/(?:sk-|gsk_)[A-Za-z0-9_-]+/g, '[redacted]').slice(0, 400) : 'The provider rejected the request'
+          lastError = new Error(`${cfg.label} HTTP ${res.status}: ${detail}`)
           const retryable = res.status === 429 || (res.status >= 500 && res.status < 600)
           if (!retryable || attempt === 4) throw lastError
           const wait = backoffMs(attempt, res.headers.get("retry-after"))

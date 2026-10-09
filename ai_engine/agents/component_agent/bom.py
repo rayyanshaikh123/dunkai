@@ -134,7 +134,7 @@ class BOMGenerator:
                 "moq": None,
                 "score": None,
                 "status": status,
-                "status_reason": STATUS_REASONS.get(status, ""),
+                "status_reason": request.get("match_issue") or STATUS_REASONS.get(status, ""),
                 "shared_with": "",
                 "description": None,
                 "datasheet_url": None,

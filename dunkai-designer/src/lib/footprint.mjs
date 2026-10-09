@@ -84,6 +84,13 @@ export function expectedPinCount(packageString) {
 export function footprinterPadCount(footprinterString) {
   const raw = String(footprinterString ?? "").trim()
   if (!raw) return null
+  // SOT-23 is a package family code, not a 23-pad package. The suffix in
+  // sot23_6 carries the pad count; unknown JEDEC families must stay unknown.
+  const jedec = raw.match(/^(sot|sc|to)\d+(?:_(\d+))?(?:_|$)/i)
+  if (jedec) {
+    const pads = Number(jedec[2])
+    return pads >= 2 && pads <= 512 ? { pads, thermalPad: /thermalpad|_ep\b|thermal/i.test(raw) } : null
+  }
   // Leading token carries family + count: "dfn8", "soic16", "qfn32", "lga12".
   const head = raw.split("_")[0]
   const m = head.match(/^([a-z]+)(\d+)$/i)

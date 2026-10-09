@@ -25,7 +25,7 @@
 
 import { spawn } from "node:child_process"
 import { createRequire } from "node:module"
-import { mkdir, readFile, readdir } from "node:fs/promises"
+import { mkdir, readFile, readdir, mkdtemp, copyFile, rm } from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { stage, item, note } from "../lib/events.mjs"
@@ -161,11 +161,17 @@ async function readImported(importedPath) {
  * import is the part we picked, while the difference from the original request
  * is recorded separately as a substitution.
  */
-async function attempt(query, component, workdir, tier, opts, expectMpn) {
-  const importsDir = path.join(workdir, "imports")
+export async function attempt(query, component, workdir, tier, opts, expectMpn) {
+  // Each CLI invocation owns its directory. Hosted Node pipes can be empty,
+  // so recovering a newly written file must never race another component's
+  // import. Repeated attempts also cannot consume a previous attempt's file.
+  const staging = await mkdtemp(path.join(workdir, '.catalogue-'))
+  try {
+  const importsDir = path.join(staging, "imports")
   const before = new Set(await readdir(importsDir).catch(() => []))
 
-  const { output } = await runTsciImport(query, workdir, opts)
+  const { output, code } = await (opts.importRunner ?? runTsciImport)(query, staging, opts)
+  if (code !== 0) return { ok: false, tier, reason: `catalogue import failed for "${query}" (exit ${code})` }
   const info = parseImportOutput(output)
 
   if (info.noResults) {
@@ -189,6 +195,12 @@ async function attempt(query, component, workdir, tier, opts, expectMpn) {
     ...opts,
     declaredMpn: expectMpn ?? component.part_number,
   })
+  if (gates.passed && read.chip.exportName) {
+    const destination = path.join(workdir, 'imports', `${read.chip.exportName}.tsx`)
+    await mkdir(path.dirname(destination), { recursive: true })
+    await copyFile(read.file, destination)
+    read.file = destination
+  }
   return {
     ok: gates.passed,
     tier,
@@ -201,6 +213,7 @@ async function attempt(query, component, workdir, tier, opts, expectMpn) {
     gates,
     reason: gates.passed ? null : gates.failures.join("; "),
   }
+  } finally { await rm(staging, { recursive: true, force: true }) }
 }
 
 async function resolveOne(component, workdir, provider, opts) {

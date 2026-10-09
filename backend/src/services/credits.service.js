@@ -147,7 +147,8 @@ export const settleCharge = async (jobId, result) => {
     const charge = await AiCharge.findOne({ jobId }).session(session);
     if (!charge || charge.status !== 'reserved') return;
 
-    const failed = !result || Boolean(result.error) || ['blocked', 'failed'].includes(result.workflow_status);
+    const failed = !result || Boolean(result.error) || ['blocked', 'failed'].includes(result.workflow_status)
+      || (charge.action === 'generate_board' && result.board?.stats?.traces === 0);
     const askedQuestion = result?.interview_status === 'question';
     // Honor zero-credit reservations admitted before monthly allowances ended.
     if (charge.freeDesign) {

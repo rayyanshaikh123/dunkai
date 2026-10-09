@@ -104,6 +104,33 @@ The uploader sets the Space secrets from ignored local files. The allowlist excl
 
 ## 4. PCB sandbox readiness
 
+### Unwired outputs and BYOK quota errors — 9 October 2026
+
+Provider failures during pin mapping now fail the board run. Previously the
+designer caught the exception and continued with unnamed, unconnected parts;
+a board with zero traces could then be displayed and charged as complete.
+OpenAI billing/quota errors are reported immediately without rate-limit
+retries. A valid API key can still lack an API credit balance. DunkAI credits
+and a customer's provider API balance are separate.
+
+Catalogue CLI imports now use one temporary directory per attempt. This
+allows a missing stdout message to be recovered from the written TSX without
+mixing files from concurrent components. The SOT footprint pad-count parser
+also distinguishes package-family codes from counts (`sot23_6` has six pads).
+
+The component ranker filters known function mismatches before price/stock
+scores are applied. Unsupported requirements return `NO_MATCH` with an
+explanation. The PCB handoff refuses missing BOM parts, and board retries
+recheck saved BOM descriptions for these mismatches. External probes, panels
+and batteries must be represented by suitable devices or explicit interfaces.
+
+The Node backend rejects an unwired PCB when the design requires nets, and
+releases the reservation for a zero-trace board. Deploy the Node changes to
+activate that additional check. Deploy the frontend changes so an OpenAI PCB
+preference retains a selected GPT-4.1 mini model. **Auto** continues to follow
+the chat's provider and exact model. Correcting provider billing alone does
+not repair an old BOM; regenerate the full design when its parts are wrong.
+
 ### Compiler completion fix — 9 October 2026
 
 The hosted sandbox can finish compilation and write artifacts while returning

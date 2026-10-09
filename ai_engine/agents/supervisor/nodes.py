@@ -650,6 +650,9 @@ def pcb_node(state: CircuitState) -> dict[str, Any]:
 
     if not rows:
         return _error("PCB node requires BOM rows.")
+    unmatched = [str(row.get("subsystem") or row.get("reference")) for row in rows if not row.get("mfr_part") or row.get("status") == "NO_MATCH"]
+    if unmatched:
+        return _error("PCB handoff needs suitable components for: " + ", ".join(unmatched) + ". Review the BOM; missing devices cannot be silently omitted.")
     if not csv_path:
         return _error("PCB node requires bom_csv_path from the Component Agent.")
 
@@ -1502,4 +1505,3 @@ INTERFACES = {interfaces!r}
 
 #endif /* PIN_CONFIG_H */
 """
-

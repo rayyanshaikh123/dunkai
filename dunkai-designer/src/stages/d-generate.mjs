@@ -113,10 +113,9 @@ export async function generateStructured(design, brief, resolution, provider, wo
         }
       }
     } catch (err) {
-      // The deterministic part of the board is still worth building: an
-      // unanswered question leaves one connection open, not the whole board.
-      modelNote = `model questions failed (${err.message.slice(0, 160)}); those members are left unconnected`
-      note(`  ${modelNote}`)
+      // Provider rejection is a failed run, not a licence to build an unwired
+      // board and spend the user's credits as though the model answered.
+      throw new Error(`Pin mapping failed: ${err.message}`, { cause: err })
     }
   } else if (mapping.questions.length) {
     modelNote = `provider ${provider.name} cannot answer pin questions; ${mapping.questions.length} left unconnected`
@@ -143,6 +142,9 @@ export async function generateStructured(design, brief, resolution, provider, wo
     return { boardTsx, nets }
   }
   const { boardTsx, nets } = await emit()
+  if (design.nets.length && !nets.length) {
+    throw new Error('No required nets could be connected. Verify the BOM and component pinouts before generating this PCB; an unwired layout is not a completed design.')
+  }
 
   const stats = mappingStats(mapping)
   // Connections left open because a part cannot do what the architecture asked

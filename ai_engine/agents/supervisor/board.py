@@ -128,6 +128,17 @@ def stream_board(state: CircuitState, job_id: str) -> Generator[dict[str, Any], 
     if pcb_ir is None:
         yield {"kind": "error", "error": "Board generation needs a pcb_ir with components."}
         return
+    # Recheck saved BOMs as well: older runs labelled unrelated substitutes OK.
+    from component_agent.suitability import mismatch
+    bom = state.get("bom") or {}
+    problems = []
+    for row in bom.get("rows", []):
+        if row.get("description"):
+            reason = mismatch(row, {"subsystem": row.get("subsystem", "")})
+            if reason: problems.append(f"{row.get('reference')}: {row.get('subsystem')} ({row.get('mfr_part')})")
+    if problems:
+        yield {"kind": "error", "error": "The BOM contains parts that do not establish the required functions: " + "; ".join(problems[:6]) + ". Regenerate the design with suitable components or external-device interfaces."}
+        return
 
     designer = _designer_root()
     problem = _preflight(designer)
