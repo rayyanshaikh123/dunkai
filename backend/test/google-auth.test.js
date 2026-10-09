@@ -173,6 +173,8 @@ test('deactivated accounts are rejected before linking or verification', async (
 function response() {
   return {
     cookies: [], cleared: [], location: '',
+    headers: {},
+    set(name, value) { this.headers[name] = value; },
     cookie(...args) { this.cookies.push(args); },
     clearCookie(...args) { this.cleared.push(args); },
     redirect(url) { this.location = url; },
@@ -195,18 +197,66 @@ test('sign-in issues a ten-minute HttpOnly state cookie and a matching Google no
   assert.equal(url.searchParams.get('state'), value);
   assert.equal(url.searchParams.get('nonce'), value);
   assert.equal(url.searchParams.get('scope'), 'openid email profile');
+  assert.equal(res.headers['Cache-Control'], 'private, no-store');
   assert.throws(() => getGoogleAuthUrl(), { statusCode: 400 });
 });
 
 test('missing, mismatched and array-valued callback state never reaches Google or the database', async () => {
   for (const [state, cookie] of [[undefined, nonce], [nonce, undefined], ['0'.repeat(64), nonce], [[nonce], nonce], [nonce, [nonce]]]) {
     const res = response();
-    await invoke(googleCallback, { query: { code: 'code', state }, cookies: { [GOOGLE_STATE_COOKIE]: cookie } }, res);
+    await invoke(googleCallback, { query: { code: 'code', state, dunkai_callback_bridge: '1' }, cookies: { [GOOGLE_STATE_COOKIE]: cookie } }, res);
     assert.ok(new URL(res.location).searchParams.has('error'));
     assert.deepEqual(res.cleared[0], [GOOGLE_STATE_COOKIE, googleStateCookieOptions]);
     assert.equal(res.cookies.length, 0);
   }
   assert.equal(upstreamRequests.length + queries.length + sessions.length, 0);
+});
+
+test('the Render callback returns to the website before reading its state cookie or issuing a session', async () => {
+  const res = response();
+  await invoke(googleCallback, { query: { code: 'google-code', state: nonce, next: 'https://attacker.example' }, cookies: {} }, res);
+  const url = new URL(res.location);
+  assert.equal(url.origin, env.clientOrigin);
+  assert.equal(url.pathname, '/api/v1/auth/google/callback');
+  assert.equal(url.searchParams.get('code'), 'google-code');
+  assert.equal(url.searchParams.get('state'), nonce);
+  assert.equal(url.searchParams.get('dunkai_callback_bridge'), '1');
+  assert.equal(url.searchParams.has('next'), false);
+  assert.equal(res.headers['Cache-Control'], 'private, no-store');
+  assert.equal(res.cookies.length + res.cleared.length + upstreamRequests.length + sessions.length + queries.length, 0);
+
+  // Vercel rewrites this same-origin request to Node, carrying the cookie
+  // originally set on the website. Only now can Google authentication run.
+  const websiteRes = response();
+  await invoke(googleCallback, { query: Object.fromEntries(url.searchParams), cookies: { [GOOGLE_STATE_COOKIE]: nonce } }, websiteRes);
+  assert.equal(new URL(websiteRes.location).searchParams.get('success'), 'true');
+  assert.equal(websiteRes.cookies.length, 2);
+  assert.equal(websiteRes.cleared.length, 1);
+  assert.equal(sessions.length, 1);
+  assert.equal(upstreamRequests[0].options.body.get('redirect_uri'), env.googleRedirectUri);
+});
+
+test('the callback bridge cannot replace a missing or mismatched state cookie', async () => {
+  for (const cookie of [undefined, '0'.repeat(64)]) {
+    const res = response();
+    await invoke(googleCallback, { query: { code: 'google-code', state: nonce, dunkai_callback_bridge: '1' }, cookies: { [GOOGLE_STATE_COOKIE]: cookie } }, res);
+    const url = new URL(res.location);
+    assert.equal(url.pathname, '/auth/callback');
+    assert.ok(url.searchParams.has('error'));
+    assert.equal(res.cookies.length + upstreamRequests.length + sessions.length + queries.length, 0);
+  }
+});
+
+test('Google cancellation on Render is returned to the website once and shown without starting a session', async () => {
+  const res = response();
+  await invoke(googleCallback, { query: { error: 'access_denied', state: nonce }, cookies: {} }, res);
+  const url = new URL(res.location);
+  assert.equal(url.pathname, '/api/v1/auth/google/callback');
+  assert.equal(url.searchParams.get('error'), 'access_denied');
+  const websiteRes = response();
+  await invoke(googleCallback, { query: Object.fromEntries(url.searchParams), cookies: { [GOOGLE_STATE_COOKIE]: nonce } }, websiteRes);
+  assert.equal(new URL(websiteRes.location).searchParams.get('error'), 'Google sign-in was cancelled.');
+  assert.equal(websiteRes.cookies.length + upstreamRequests.length + sessions.length, 0);
 });
 
 test('a valid callback sets auth cookies and redirects to the frontend', async () => {

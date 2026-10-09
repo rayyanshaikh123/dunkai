@@ -61,11 +61,16 @@ A common split: **Vercel** for the frontend, **Render / Railway / Fly.io** for t
 Point `GOOGLE_REDIRECT_URI` at the **frontend's** origin — `https://app.example.com/api/v1/auth/google/callback` — so the rewrite carries the callback to the backend and the auth cookies are set on the site's own domain. Register the same URL in Google Cloud Console.
 
 For the current hosted site, use `https://dunkai.vercel.app/api/v1/auth/google/callback`.
-Start sign-in through the same frontend (`/api/v1/auth/google`). A ten-minute
+Start sign-in through the frontend (`/api/v1/auth/google`). A ten-minute
 HttpOnly cookie binds the callback to the browser, and the ID token must match
-the OAuth nonce. Do not mix a frontend sign-in URL with a backend callback URL:
-the browser will not send the state cookie to the other hostname. Locally,
-use `http://localhost:3000/api/v1/auth/google/callback` with the frontend rewrite.
+the OAuth nonce. Existing Google clients registered with
+`https://dunkai.onrender.com/api/v1/auth/google/callback` also work: Node returns
+the callback to the frontend's `/api` rewrite once to receive the website's state
+cookie, then validates it and exchanges the code using the registered Render URI.
+The callback bridge never accepts a missing or mismatched website cookie and
+cannot redirect to a user-provided URL. Both OAuth endpoints disable caching.
+Locally, use `http://localhost:3000/api/v1/auth/google/callback` with the frontend
+rewrite.
 
 The backend verifies the Google ID token's signature, audience, issuer, expiry,
 nonce, and `email_verified` claim. Google account IDs (`sub`) identify returning

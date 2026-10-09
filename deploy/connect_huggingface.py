@@ -33,7 +33,9 @@ def main():
         'DISABLE_CREDITS_FOR_TESTING': 'false',
         'FRONTEND_URL': 'https://dunkai.vercel.app',
         'CLIENT_ORIGIN': 'https://dunkai.vercel.app',
-        'GOOGLE_REDIRECT_URI': 'https://dunkai.vercel.app/api/v1/auth/google/callback',
+        # Keep the URI already registered with Google. The backend can return
+        # a Render callback to Vercel before validating the website cookie.
+        'GOOGLE_REDIRECT_URI': backend.get('GOOGLE_REDIRECT_URI') or 'https://dunkai.vercel.app/api/v1/auth/google/callback',
     }
     for name in ('GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET'):
         if backend.get(name): settings[name] = backend[name]

@@ -92,6 +92,7 @@ export const resendVerification = asyncHandler(async (req, res) => {
 // ---- Google OAuth ----
 
 export const googleAuth = asyncHandler(async (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
   const state = createGoogleState();
   const url = service.getGoogleAuthUrl(state);
   res.cookie(GOOGLE_STATE_COOKIE, state, { ...googleStateCookieOptions, maxAge: 10 * 60 * 1000 });
@@ -99,8 +100,26 @@ export const googleAuth = asyncHandler(async (req, res) => {
 });
 
 export const googleCallback = asyncHandler(async (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
   const { code, error, state } = req.query;
   const expectedState = req.cookies?.[GOOGLE_STATE_COOKIE];
+
+  // Existing Google clients may register the Render callback while sign-in
+  // starts through Vercel. The state cookie belongs to Vercel. Return the
+  // callback there once before checking it, exchanging the code, or issuing
+  // auth cookies. The code exchange still uses Google's registered URI.
+  const websiteCallback = new URL('/api/v1/auth/google/callback', env.clientOrigin);
+  if (!expectedState && req.query.dunkai_callback_bridge === undefined &&
+      new URL(env.googleRedirectUri).origin !== websiteCallback.origin &&
+      isValidGoogleState(state, state) &&
+      ((typeof code === 'string' && code) || (typeof error === 'string' && error))) {
+    websiteCallback.searchParams.set('state', state);
+    if (typeof code === 'string' && code) websiteCallback.searchParams.set('code', code);
+    if (typeof error === 'string' && error) websiteCallback.searchParams.set('error', error);
+    websiteCallback.searchParams.set('dunkai_callback_bridge', '1');
+    return res.redirect(websiteCallback.toString());
+  }
+
   res.clearCookie(GOOGLE_STATE_COOKIE, googleStateCookieOptions);
   const failure = (message) => res.redirect(`${env.clientOrigin}/auth/callback?error=${encodeURIComponent(message)}`);
   if (!isValidGoogleState(state, expectedState)) {
