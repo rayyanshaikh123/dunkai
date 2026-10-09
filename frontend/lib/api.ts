@@ -315,8 +315,9 @@ export interface WalletSummary {
   reserved: number
   available: number
   freeChatsUsed: number
-  freeChatsLimit: number
-  freeAllowanceUnit: 'model_call' | 'design_chat'
+  freeChatsLimit: null
+  unlimitedChats: boolean
+  freeAllowanceUnit: 'credits'
   period: string
 }
 
@@ -327,8 +328,9 @@ export interface PublicPlans {
   localRuntimeEnabled: boolean
   currency: 'INR'
   tariffVersion: number
-  freeChatsPerMonth: number
-  freeAllowanceUnit: 'model_call' | 'design_chat'
+  freeChatsPerMonth: null
+  unlimitedChats: boolean
+  freeAllowanceUnit: 'credits'
   freePipelineRunsPerChat: number
   freeBoardRunsPerChat: number
   trialCredits: number
@@ -361,6 +363,11 @@ export const billingApi = {
   entries: () => request<Array<{ _id: string; kind: string; availableTrialDelta: number; availablePaidDelta: number; createdAt: string }>>('/billing/entries'),
   quote: (action: string, byok = false, chatId?: string) => request<{ credits: number; kind: string; included?: boolean }>(`/billing/quote?${new URLSearchParams({ action, byok: String(byok), ...(chatId ? { chatId } : {}) })}`),
   checkout: (packId: string) => request<{ url: string; orderId: string }>('/billing/checkout', { method: 'POST', body: JSON.stringify({ packId }) }),
+  reconcile: (sessionId?: string) => request<{
+    payments: Array<{ orderId: string; sessionId: string; status: 'pending' | 'paid' | 'refunded' | 'disputed' | 'expired'; credits: number }>
+    errors: Array<{ message: string }>
+    wallet: WalletSummary
+  }>('/billing/reconcile', { method: 'POST', body: JSON.stringify(sessionId ? { sessionId } : {}) }),
 }
 
 // ---- File API ----

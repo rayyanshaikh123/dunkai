@@ -7,8 +7,8 @@ test('Settings pairs and revokes a computer, displays model-call pricing and dow
     const path = new URL(route.request().url()).pathname.replace('/api/v1', '')
     let data: unknown = null
     if (path === '/auth/me') data = { _id: '123456789012345678901235', name: 'Tester', email: 'test@example.com', isVerified: true }
-    else if (path === '/billing/plans') data = { billingEnabled: false, meteringEnabled: true, localRuntimeEnabled: true, currency: 'INR', tariffVersion: 1, freeChatsPerMonth: 5, trialCredits: 0, packs: [], rates: { inference: 2, board: 0, pipeline: 0 } }
-    else if (path === '/billing/usage') data = { billingEnabled: false, meteringEnabled: true, period: '2026-10', wallet: { available: 0, trialAvailable: 0, paidAvailable: 0, reserved: 0, freeChatsUsed: 1, freeChatsLimit: 5 } }
+    else if (path === '/billing/plans') data = { billingEnabled: false, meteringEnabled: true, localRuntimeEnabled: true, currency: 'INR', tariffVersion: 3, unlimitedChats: true, freeChatsPerMonth: null, trialCredits: 500, packs: [], rates: { inference: 2, board: 0, pipeline: 0 } }
+    else if (path === '/billing/usage') data = { billingEnabled: false, meteringEnabled: true, period: '2026-10', wallet: { available: 500, trialAvailable: 500, paidAvailable: 0, reserved: 0, unlimitedChats: true, freeChatsUsed: 0, freeChatsLimit: null } }
     else if (path === '/ai/providers') data = { localRuntimeEnabled: true, engineReachable: connected, boardProviders: [], runtime: connected ? device : null, chat: { byok: false, hosted: true } }
     else if (path === '/account/keys') data = []
     else if (path === '/runtime/devices' && route.request().method() === 'GET') data = { localRuntimeEnabled: true, devices: connected ? [device] : [] }
@@ -20,7 +20,8 @@ test('Settings pairs and revokes a computer, displays model-call pricing and dow
   })
   await page.goto('/settings')
   await expect(page.getByRole('heading', { name: 'This computer' })).toBeVisible()
-  await expect(page.getByText('Free hosted model calls', { exact: true })).toBeVisible()
+  await expect(page.getByText('Unlimited chats', { exact: true })).toBeVisible()
+  await expect(page.getByText('Free hosted model calls', { exact: true })).toHaveCount(0)
   await expect(page.getByRole('heading', { name: 'Your API keys', exact: true })).toHaveCount(0)
   await page.getByLabel('Computer pairing code').fill('ABCDE-12345')
   await page.getByRole('button', { name: 'Connect this computer' }).click()

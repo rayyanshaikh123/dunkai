@@ -58,11 +58,40 @@ Credit pack sessions explicitly use direct Checkout (`managed_payments.enabled=f
 
 `AI_QUEUE_ENABLED=false` keeps the existing Node process executing jobs directly with MongoDB job records, credit reservations and interruption reconciliation. Stripe checkout does not require a separate Redis worker. If enabling the optional queue later, supply `REDIS_URL` and run its worker.
 
-## Free design chats
+## Unlimited chats and welcome credits
 
-Verified users can start **five design chats per calendar month (UTC)**. Each chat includes requirements clarification, one completed pipeline and one PCB generation at **0 credits**, even when its wallet balance is zero. Additional pipeline/board generations use the published credit quotes. A transport failure, cancellation or failed workflow releases the included operation so it can be retried. A failed first request also returns the monthly slot. Chat deletion does not return a used slot. An unfinished chat can finish its included run after the month changes; a fully completed chat needs another monthly slot for a new free run.
+Every user can create **unlimited chats**, with no monthly five-chat allowance.
+Chat creation does not spend credits. AI operations use the published tariffs:
+chat/interview replies cost 2 credits, a hosted design pipeline reserves up to 30,
+and hosted Groq PCB generation costs 101. BYOK pipeline compute costs 10 and
+board compute costs 20. Failed operations release their reservations. Existing
+jobs already reserved under the old free-design policy retain their zero charge.
 
-Existing accounts receive this allowance independently of their trial-wallet history. No manual wallet top-up or bulk database migration is needed. The one-time trial-credit bonus remains available under the existing policy; paid balances are preserved.
+Verified accounts receive **500 free credits once**. This credit grant does not
+renew monthly. Existing wallets are topped up to a lifetime grant of 500 using
+their credit ledger: an account that previously received 150 gets 350 more,
+preserving credits already spent, reserved, or purchased. Accounts with no prior
+grant receive the full 500. Once the balance is depleted, users can still create
+chats, but need more credits for billable AI work.
+
+## Stripe credit recovery
+
+Checkout returns include the Stripe session ID. Settings asks the authenticated
+Node backend to confirm that session directly with Stripe, checks its owner,
+amount, currency, metadata and environment mode against the saved order, and
+adds the purchased credits atomically once. The same function handles signed
+webhooks, so concurrent webhook delivery or page refresh cannot duplicate a grant.
+**Refresh balance** also checks that user's pending orders, including purchases
+made before session IDs were added to the return URL. The existing Node process
+checks pending payments at startup and every five minutes while running.
+
+Keep the webhook configured as the primary payment delivery mechanism. If it
+returns `Invalid Stripe signature`, import the private
+`deploy/dist/render-stripe.env` into Render (or copy its Stripe settings there)
+and redeploy. Its signing secret belongs to the enabled webhook for
+`https://dunkai.onrender.com/api/v1/billing/webhook`. Stripe CLI listener secrets
+and other webhook endpoints' secrets are not interchangeable. The webhook route
+must keep its raw-body parser before `express.json()`. Never publish the env file.
 
 ## 3. Publish the engine
 

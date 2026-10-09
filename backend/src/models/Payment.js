@@ -10,7 +10,8 @@ const paymentSchema = new mongoose.Schema({
   stripeSessionId: { type: String, sparse: true, unique: true },
   paymentIntentId: { type: String, default: null, index: true },
   reversedCredits: { type: Number, default: 0 },
-  status: { type: String, enum: ['pending', 'paid', 'refunded', 'disputed'], default: 'pending' },
+  status: { type: String, enum: ['pending', 'paid', 'refunded', 'disputed', 'expired'], default: 'pending' },
+  lastCheckedAt: { type: Date },
 }, { timestamps: true });
 
 export const Payment = mongoose.model('Payment', paymentSchema);

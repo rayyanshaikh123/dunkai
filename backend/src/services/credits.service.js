@@ -1,36 +1,15 @@
 import mongoose from 'mongoose';
 import { env } from '../config/env.js';
-import { CREDIT_TARIFF_VERSION, FREE_CHATS_PER_MONTH, TRIAL_CREDITS, creditQuote } from '../config/credits.js';
+import { CREDIT_TARIFF_VERSION, TRIAL_CREDITS, creditQuote } from '../config/credits.js';
 import { AiCharge } from '../models/AiCharge.js';
 import { CreditEntry } from '../models/CreditEntry.js';
 import { Usage } from '../models/Usage.js';
 import { Wallet } from '../models/Wallet.js';
-import { User } from '../models/User.js';
 import { Chat } from '../models/Chat.js';
 import { ApiError } from '../utils/ApiError.js';
 
 export const currentCreditPeriod = (date = new Date()) => date.toISOString().slice(0, 7);
 
-const DESIGN_ACTIONS = new Set([
-  'chat', 'run_workflow', 'generate_requirements', 'generate_architecture', 'generate_components',
-  'generate_eda', 'generate_pcb', 'generate_validation', 'generate_documentation',
-  'generate_code', 'generate_board', 'revise_interfaces',
-]);
-const activeFreeDesign = (chat, period) => {
-  const design = chat.freeDesign;
-  if (!design?.period) return null;
-  const completed = design.completedActions || [];
-  // An unfinished included design can be finished after the month changes.
-  if (design.period !== period && completed.includes('run_workflow') && completed.includes('generate_board')) return null;
-  return design;
-};
-const includesAction = (design, action) => {
-  if (!DESIGN_ACTIONS.has(action)) return false;
-  if (!design) return true;
-  const completed = design.completedActions || [];
-  if (completed.includes(action)) return false;
-  return action === 'generate_board' || !completed.includes('run_workflow');
-};
 const ownedDesignChat = async (user, chatId, projectId, session = null) => {
   const chat = await Chat.findOne({ _id: chatId, user: user._id }).session(session);
   if (!chat) throw ApiError.notFound('Chat not found');
@@ -38,20 +17,11 @@ const ownedDesignChat = async (user, chatId, projectId, session = null) => {
   return chat;
 };
 
-/** Read-only quote using the same eligibility rule as transactional admission. */
+/** Chat creation is unlimited; AI actions use the same tariff for every chat. */
 export const quoteCharge = async (user, { action, byok = false, chatId, projectId }) => {
   const quote = creditQuote({ action, byok });
-  if (env.localRuntimeEnabled || !chatId) return quote;
-  const period = currentCreditPeriod();
-  const [chat, usage] = await Promise.all([
-    ownedDesignChat(user, chatId, projectId),
-    Usage.findOne({ user: user._id, period }).lean(),
-  ]);
-  const design = activeFreeDesign(chat, period);
-  const included = user.isVerified && includesAction(design, action)
-    && (design || (usage?.freeDesignsUsed ?? 0) < FREE_CHATS_PER_MONTH);
-  return { ...quote, credits: included ? 0 : quote.credits, included: Boolean(included),
-    freeChatsRemaining: Math.max(0, FREE_CHATS_PER_MONTH - (usage?.freeDesignsUsed ?? 0)) };
+  if (!env.localRuntimeEnabled && chatId) await ownedDesignChat(user, chatId, projectId);
+  return { ...quote, included: false };
 };
 
 const ensureWallet = async (userId) => {
@@ -78,16 +48,23 @@ export const getOrCreateWallet = async (user) => {
   if (env.creditMeteringEnabled && user.isVerified) {
     await mongoose.connection.transaction(async (session) => {
       const wallet = await Wallet.findOne({ user: user._id }).session(session);
-      if (wallet.trialGranted) return;
+      const target = TRIAL_CREDITS;
+      if (wallet.trialGranted && wallet.trialCreditsGranted >= target) return;
+      let granted = wallet.trialCreditsGranted;
+      if (granted == null) {
+        const prior = await CreditEntry.find({ user: user._id, kind: { $in: ['trial_grant', 'trial_topup'] } })
+          .select('availableTrialDelta').session(session).lean();
+        granted = prior.reduce((total, item) => total + item.availableTrialDelta, 0);
+      }
+      const grant = Math.max(0, target - granted);
       wallet.trialGranted = true;
-      // Local CPU work is free; five hosted model calls are the free offer.
-      const grant = env.localRuntimeEnabled ? 0 : TRIAL_CREDITS;
+      wallet.trialCreditsGranted = granted + grant;
       wallet.trialAvailable += grant;
       await wallet.save({ session });
       if (grant) {
         await entry(session, {
-          user: user._id, kind: 'trial_grant', availableTrialDelta: grant,
-          idempotencyKey: `trial:${user._id}`,
+          user: user._id, kind: granted ? 'trial_topup' : 'trial_grant', availableTrialDelta: grant,
+          idempotencyKey: `trial:${user._id}:${target}`,
         });
       }
     });
@@ -96,19 +73,17 @@ export const getOrCreateWallet = async (user) => {
 };
 
 export const walletSummary = async (user) => {
-  const [wallet, usage] = await Promise.all([
-    getOrCreateWallet(user),
-    Usage.findOne({ user: user._id, period: currentCreditPeriod() }).lean(),
-  ]);
+  const wallet = await getOrCreateWallet(user);
   return {
     currency: 'INR',
     trialAvailable: wallet.trialAvailable,
     paidAvailable: wallet.paidAvailable,
     reserved: wallet.trialReserved + wallet.paidReserved,
     available: wallet.trialAvailable + wallet.paidAvailable,
-    freeChatsUsed: env.localRuntimeEnabled ? usage?.freeChatsUsed ?? 0 : usage?.freeDesignsUsed ?? 0,
-    freeChatsLimit: FREE_CHATS_PER_MONTH,
-    freeAllowanceUnit: env.localRuntimeEnabled ? 'model_call' : 'design_chat',
+    unlimitedChats: true,
+    freeChatsUsed: 0,
+    freeChatsLimit: null,
+    freeAllowanceUnit: 'credits',
     period: currentCreditPeriod(),
   };
 };
@@ -132,25 +107,8 @@ export const reserveCharge = async (user, jobId, { action, byok = false, chatId 
     }
 
     const wallet = await Wallet.findOne({ user: user._id }).session(session);
-    const usage = await Usage.findOne({ user: user._id, period }).session(session);
     const chat = !env.localRuntimeEnabled && chatId ? await ownedDesignChat(user, chatId, projectId, session) : null;
-    let design = chat ? activeFreeDesign(chat, period) : null;
-    const freeDesign = Boolean(chat && user.isVerified && includesAction(design, action)
-      && (design || usage.freeDesignsUsed < FREE_CHATS_PER_MONTH));
-    if (freeDesign) {
-      if (design?.pendingJobId) throw new ApiError(429, 'A run is already active in this free chat. Wait for it to finish.');
-      if (!design) {
-        design = { period, completedActions: [], successfulRequests: 0 };
-        usage.freeDesignsUsed += 1;
-        await usage.save({ session });
-      }
-      chat.freeDesign = { ...(design.toObject?.() || design), pendingJobId: jobId };
-      await chat.save({ session });
-    }
-    // Preserve standalone/local model-call allowances; scoped hosted chats
-    // use one monthly entitlement for their entire included design instead.
-    const freeChat = !chat && kind === 'chat' && !byok && user.isVerified && usage.freeChatsUsed < FREE_CHATS_PER_MONTH;
-    const reserve = freeChat || freeDesign ? 0 : credits;
+    const reserve = credits;
     const reserveTrial = Math.min(wallet.trialAvailable, reserve);
     const reservePaid = reserve - reserveTrial;
     if (reserve > 0 && wallet.paidAvailable < reservePaid) {
@@ -159,10 +117,6 @@ export const reserveCharge = async (user, jobId, { action, byok = false, chatId 
       ]);
     }
 
-    if (freeChat) {
-      usage.freeChatsUsed += 1;
-      await usage.save({ session });
-    }
     if (reserve) {
       wallet.trialAvailable -= reserveTrial;
       wallet.paidAvailable -= reservePaid;
@@ -177,9 +131,8 @@ export const reserveCharge = async (user, jobId, { action, byok = false, chatId 
       });
     }
     await AiCharge.create([{
-      user: user._id, jobId, action, kind, period, byok, freeChat,
-      chat: chat?._id, freeDesign, freeDesignPeriod: freeDesign ? design.period : undefined,
-      freeDesignStep: freeDesign ? action : undefined,
+      user: user._id, jobId, action, kind, period, byok,
+      chat: chat?._id, freeChat: false, freeDesign: false,
       quoteCredits: credits, reserveTrial, reservePaid, tariffVersion: CREDIT_TARIFF_VERSION,
     }], { session });
   });
@@ -196,16 +149,7 @@ export const settleCharge = async (jobId, result) => {
 
     const failed = !result || Boolean(result.error) || ['blocked', 'failed'].includes(result.workflow_status);
     const askedQuestion = result?.interview_status === 'question';
-    if (!failed && askedQuestion && !charge.chat && charge.kind === 'pipeline' && !charge.byok && !charge.freeChat) {
-      const owner = await User.findById(charge.user).select('isVerified').session(session);
-      if (owner?.isVerified) {
-        const free = await Usage.updateOne(
-          { user: charge.user, period: charge.period, freeChatsUsed: { $lt: FREE_CHATS_PER_MONTH } },
-          { $inc: { freeChatsUsed: 1 } }, { session }
-        );
-        charge.freeChat = free.modifiedCount > 0;
-      }
-    }
+    // Honor zero-credit reservations admitted before monthly allowances ended.
     if (charge.freeDesign) {
       const chat = await Chat.findOne({ _id: charge.chat, user: charge.user }).session(session);
       if (chat?.freeDesign?.period === charge.freeDesignPeriod && chat.freeDesign.pendingJobId === jobId) {

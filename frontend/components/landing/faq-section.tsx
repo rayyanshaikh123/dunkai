@@ -18,8 +18,8 @@ const FAQS = [
     a: "For hosted execution, add your provider key in Settings. The backend encrypts it and sends it to the engine for your authorized jobs. For optional local execution, configure the key in your computer's runtime instead. Published computation credits depend on the execution mode.",
   },
   {
-    q: "How do free chats and credits work?",
-    a: "Pricing and Settings show the current free allowance and the credits needed for each action. A complete design can require several model calls. Hosted engine pricing includes computation; local runtime pricing meters hosted model calls. Credit packs are priced in INR.",
+    q: "How do chats and credits work?",
+    a: "You can create unlimited chats. Verified accounts receive 500 free credits once; AI runs use those credits or purchased credits. Pricing and Settings show the cost of each action. Hosted engine pricing includes computation; local runtime pricing meters hosted model calls. Credit packs are priced in INR.",
   },
   {
     q: "Can I run DunkAI on my own infrastructure?",

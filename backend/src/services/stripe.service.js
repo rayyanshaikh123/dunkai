@@ -13,7 +13,7 @@ import { getOrCreateWallet } from './credits.service.js';
 let stripeClient;
 const stripe = () => {
   if (!env.stripeSecretKey) throw new ApiError(503, 'Stripe checkout is not configured');
-  stripeClient ??= new Stripe(env.stripeSecretKey);
+  stripeClient ??= new Stripe(env.stripeSecretKey, { timeout: 10000, maxNetworkRetries: 1 });
   return stripeClient;
 };
 
@@ -38,7 +38,7 @@ export const createCheckout = async (user, packId) => {
         product_data: { name: `${pack.credits} DunkAI credits` } }, quantity: 1,
     }],
     metadata: { orderId, userId: String(user._id), packId },
-    success_url: `${env.clientOrigin}/settings?checkout=success`,
+    success_url: `${env.clientOrigin}/settings?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${env.clientOrigin}/settings?checkout=cancelled`,
   }, { idempotencyKey: orderId });
   await Payment.updateOne({ _id: order._id, status: 'pending' }, { $set: { stripeSessionId: session.id } });
@@ -53,6 +53,84 @@ export const verifyStripeEvent = (body, signature) => {
 
 const expectedLiveMode = () => env.stripeSecretKey.startsWith('sk_live_');
 
+const paymentSummary = (order) => ({
+  orderId: order.orderId, sessionId: order.stripeSessionId,
+  status: order.status, credits: order.credits,
+});
+
+/** Shared by signed webhooks and Stripe API reconciliation. Never trust the browser's payment status. */
+const fulfillPaidCheckout = async (object, dbSession) => {
+  const order = await Payment.findOne({ orderId: object.metadata?.orderId }).session(dbSession);
+  if (!order) throw ApiError.badRequest('Unknown checkout order');
+  if (String(order.user) !== object.metadata?.userId || order.packId !== object.metadata?.packId ||
+      object.client_reference_id !== order.orderId || object.mode !== 'payment' ||
+      object.currency?.toLowerCase() !== 'inr' || object.amount_total !== order.amountPaise ||
+      (order.stripeSessionId && order.stripeSessionId !== object.id)) {
+    throw ApiError.badRequest('Checkout payment does not match the order');
+  }
+  if (object.payment_status !== 'paid') return order;
+  if (order.status === 'pending') {
+    const wallet = await Wallet.findOne({ user: order.user }).session(dbSession);
+    if (!wallet) throw new Error('Wallet missing for paid order');
+    wallet.paidAvailable += order.credits;
+    await wallet.save({ session: dbSession });
+    order.status = 'paid';
+    order.stripeSessionId = object.id;
+    order.paymentIntentId = typeof object.payment_intent === 'string' ? object.payment_intent : object.payment_intent?.id;
+    await order.save({ session: dbSession });
+    await CreditEntry.create([{
+      user: order.user, payment: order._id, kind: 'payment_grant',
+      availablePaidDelta: order.credits, idempotencyKey: `payment:${order.orderId}`,
+    }], { session: dbSession });
+  }
+  return order;
+};
+
+/** Check a session owned by this user against Stripe, then fulfill it once. */
+export const confirmCheckout = async (user, sessionId, {
+  retrieveSession = (id) => stripe().checkout.sessions.retrieve(id),
+} = {}) => {
+  const order = await Payment.findOne({ user: user._id, stripeSessionId: sessionId }).lean();
+  if (!order) throw ApiError.notFound('Checkout not found');
+  if (order.status !== 'pending') return paymentSummary(order);
+  await Payment.updateOne({ _id: order._id }, { $set: { lastCheckedAt: new Date() } });
+  let checkout;
+  try {
+    checkout = await retrieveSession(sessionId);
+  } catch {
+    throw ApiError.badGateway('Could not confirm payment with Stripe. Please refresh your balance in a moment.');
+  }
+  if (checkout.id !== sessionId || checkout.livemode !== expectedLiveMode()) {
+    throw ApiError.badRequest('Stripe mode or session mismatch');
+  }
+  if (checkout.metadata?.orderId !== order.orderId || checkout.metadata?.userId !== String(user._id)) {
+    throw ApiError.badRequest('Checkout payment does not match the order');
+  }
+  let confirmed;
+  await mongoose.connection.transaction(async (dbSession) => {
+    confirmed = await fulfillPaidCheckout(checkout, dbSession);
+    if (confirmed.status === 'pending' && checkout.status === 'expired') {
+      confirmed.status = 'expired';
+      await confirmed.save({ session: dbSession });
+    }
+  });
+  return paymentSummary(confirmed);
+};
+
+/** Recover missed deliveries using the existing Node process; no extra worker is needed. */
+export const reconcilePendingPayments = async (user = null, options = {}) => {
+  const orders = await Payment.find({
+    status: 'pending', stripeSessionId: { $type: 'string' },
+    ...(user ? { user: user._id } : {}),
+  }).sort({ lastCheckedAt: 1, createdAt: 1 }).limit(10).select('user stripeSessionId').lean();
+  const payments = [], errors = [];
+  for (const order of orders) {
+    try { payments.push(await confirmCheckout({ _id: order.user }, order.stripeSessionId, options)); }
+    catch (error) { errors.push({ message: error.isOperational ? error.message : 'Payment confirmation failed' }); }
+  }
+  return { payments, errors };
+};
+
 export const handleStripeEvent = async (event) => {
   if (event.livemode !== expectedLiveMode()) throw ApiError.badRequest('Stripe mode mismatch');
   const sessionTypes = ['checkout.session.completed', 'checkout.session.async_payment_succeeded'];
@@ -64,29 +142,7 @@ export const handleStripeEvent = async (event) => {
     const object = event.data.object;
     if (sessionTypes.includes(event.type)) {
       if (object.payment_status !== 'paid') return; // async success will arrive later
-      const orderId = object.metadata?.orderId;
-      const order = await Payment.findOne({ orderId }).session(dbSession);
-      if (!order) throw ApiError.badRequest('Unknown checkout order');
-      if (String(order.user) !== object.metadata?.userId || order.packId !== object.metadata?.packId ||
-          object.client_reference_id !== order.orderId || object.mode !== 'payment' ||
-          object.currency?.toLowerCase() !== 'inr' || object.amount_total !== order.amountPaise ||
-          (order.stripeSessionId && order.stripeSessionId !== object.id)) {
-        throw ApiError.badRequest('Checkout payment does not match the order');
-      }
-      if (order.status === 'pending') {
-        const wallet = await Wallet.findOne({ user: order.user }).session(dbSession);
-        if (!wallet) throw new Error('Wallet missing for paid order');
-        wallet.paidAvailable += order.credits;
-        await wallet.save({ session: dbSession });
-        order.status = 'paid';
-        order.stripeSessionId = object.id;
-        order.paymentIntentId = typeof object.payment_intent === 'string' ? object.payment_intent : object.payment_intent?.id;
-        await order.save({ session: dbSession });
-        await CreditEntry.create([{
-          user: order.user, payment: order._id, kind: 'payment_grant',
-          availablePaidDelta: order.credits, idempotencyKey: `payment:${order.orderId}`,
-        }], { session: dbSession });
-      }
+      await fulfillPaidCheckout(object, dbSession);
     } else {
       const intentId = typeof object.payment_intent === 'string' ? object.payment_intent : object.payment_intent?.id;
       const order = await Payment.findOne({ paymentIntentId: intentId }).session(dbSession);

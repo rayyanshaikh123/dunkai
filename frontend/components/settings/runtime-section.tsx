@@ -57,7 +57,7 @@ export function RuntimeSection() {
           </div>
         ))}
       </div>
-      <p className="text-xs text-muted-foreground">Local computation uses 0 credits. Hosted model calls use your free allowance, then 2 credits per successful call. For BYOK, set your Groq key in the local runtime configuration; it stays on your computer. You can view projects on mobile while a paired computer processes them.</p>
+      <p className="text-xs text-muted-foreground">Create unlimited chats. Local computation uses 0 credits; hosted model calls cost 2 credits per successful call from your free or purchased balance. For BYOK, set your Groq key in the local runtime configuration; it stays on your computer. You can view projects on mobile while a paired computer processes them.</p>
     </div>
   )
 }

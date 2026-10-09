@@ -41,7 +41,7 @@ function VerifyEmailContent() {
 
   return (
     <AuthShell eyebrow="Account verification" title={status === 'verified' ? 'Email verified' : 'Verify your email'}
-      description={status === 'verified' ? 'Your five free design chats are now available.' : googleMailboxCheck ? 'Google does not manage this mailbox. Send a verification link to confirm you own it.' : 'Open the link sent to your email. It expires after 24 hours.'}>
+      description={status === 'verified' ? 'Your account is verified. Create unlimited chats and use your one-time 500 free credits for AI runs.' : googleMailboxCheck ? 'Google does not manage this mailbox. Send a verification link to confirm you own it.' : 'Open the link sent to your email. It expires after 24 hours.'}>
       <div className="space-y-4 text-sm">
         {status === 'checking' && <p className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />Verifying…</p>}
         {message && <p className="rounded-xl bg-secondary p-3">{message}</p>}

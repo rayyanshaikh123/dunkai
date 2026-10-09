@@ -89,15 +89,14 @@ The small catalogue embedding model is cached locally; no local generative
 language model is required.
 
 - Local computation costs **0 DunkAI credits**, including PCB generation.
-- Five **hosted model completions**, per verified account per UTC month, are
-  free. These are model calls, not five complete projects or chat messages.
-- Further successful hosted completions cost **2 credits each**. A pipeline
+- Chat creation is **unlimited**. Verified accounts receive **500 free credits
+  once**, with no monthly model-call allowance.
+- Successful hosted completions cost **2 credits each**. A pipeline
   can make multiple calls. Provider failures release the reservation;
   successful calls remain billable even if a later design stage fails.
 - BYOK calls go from the user's runtime directly to Groq: **0 DunkAI credits**;
   the user's Groq account pays any provider charges.
-- Local mode does not grant 150 new trial credits. Existing purchased balances
-  remain usable. ₹200/₹500/₹1500 prepaid packs remain available when Stripe
+- The one-time welcome grant and existing purchased balances remain usable. ₹200/₹500/₹1500 prepaid packs remain available when Stripe
   checkout is configured and `BILLING_ENABLED=true`.
 - Closing checkout (`BILLING_ENABLED=false`) still enforces the hosted free
   quota. Only local development can set `DISABLE_CREDITS_FOR_TESTING=true`.

@@ -14,3 +14,4 @@ billingRoutes.get('/wallet', c.wallet);
 billingRoutes.get('/entries', c.entries);
 billingRoutes.get('/quote', query('action').isString().notEmpty(), query('byok').optional().isBoolean(), query('chatId').optional().isMongoId(), validate, c.quote);
 billingRoutes.post('/checkout', body('packId').isIn(Object.keys(CREDIT_PACKS)), validate, c.checkout);
+billingRoutes.post('/reconcile', body('sessionId').optional().isString().isLength({ max: 255 }).matches(/^cs_[A-Za-z0-9_]+$/), validate, c.reconcile);

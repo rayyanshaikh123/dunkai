@@ -78,11 +78,66 @@ function UsageCard() {
   const plans = useQuery({ queryKey: ['billing', 'plans'], queryFn: billingApi.plans, staleTime: 5 * 60_000 })
   const [buying, setBuying] = useState<string | null>(null)
   const [buyError, setBuyError] = useState<string | null>(null)
+  const [paymentNotice, setPaymentNotice] = useState('')
+  const [refreshing, setRefreshing] = useState(false)
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('checkout') !== 'success') return
+    const sessionId = params.get('session_id') || undefined
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const confirm = async (attempt: number) => {
+      setPaymentNotice('Confirming your payment with Stripe…')
+      try {
+        const result = await billingApi.reconcile(sessionId)
+        if (cancelled) return
+        await queryClient.invalidateQueries({ queryKey: ['billing', 'usage'] })
+        if (cancelled) return
+        const paid = result.payments.filter(payment => payment.status === 'paid')
+        if (paid.length) {
+          const credits = paid.reduce((total, payment) => total + payment.credits, 0)
+          setPaymentNotice(`${credits.toLocaleString('en-IN')} purchased credits are available in your balance.`)
+          toast.success('Payment confirmed. Your credits are available.', { id: 'checkout-confirmation' })
+          const url = new URL(window.location.href)
+          url.searchParams.delete('checkout')
+          url.searchParams.delete('session_id')
+          window.history.replaceState(null, '', url.pathname + url.search + url.hash)
+          return
+        }
+        const pending = result.payments.some(payment => payment.status === 'pending') || result.errors.length > 0
+        if (pending && attempt < 9) {
+          setPaymentNotice('Payment confirmation is pending. We’re checking again…')
+          timer = setTimeout(() => { void confirm(attempt + 1) }, 3000)
+        } else {
+          setPaymentNotice(pending ? 'Payment confirmation is still pending. Use Refresh balance in a moment.' : 'Your balance is up to date. No new paid checkout was found.')
+        }
+      } catch (error) {
+        if (cancelled) return
+        const message = error instanceof Error ? error.message : 'Could not confirm your payment. Use Refresh balance to try again.'
+        setPaymentNotice(message)
+        toast.error(message, { id: 'checkout-confirmation' })
+      }
+    }
+    void confirm(0)
+    return () => { cancelled = true; if (timer) clearTimeout(timer) }
+  }, [queryClient])
+
+  const refreshBalance = async () => {
+    setRefreshing(true)
+    try {
+      const result = await billingApi.reconcile()
+      if (result.errors.length) toast.error(result.errors[0].message)
+      await queryClient.invalidateQueries({ queryKey: ['billing', 'usage'] })
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not refresh your balance')
+    } finally { setRefreshing(false) }
+  }
 
   if (usage.isLoading) return <div className="h-24 animate-pulse rounded-2xl bg-secondary" />
   if (!usage.data) return <p className="text-sm text-muted-foreground">Usage is unavailable right now.</p>
 
-  const { wallet, billingEnabled, meteringEnabled, period } = usage.data
+  const { wallet, billingEnabled, meteringEnabled } = usage.data
   const buy = async (packId: string) => {
     setBuying(packId)
     setBuyError(null)
@@ -100,20 +155,21 @@ function UsageCard() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <span className="rounded-full bg-primary px-3 py-1 text-xs font-medium text-primary-foreground">Prepaid credits</span>
-          <span className="text-xs text-muted-foreground">Free chats for {period} (UTC)</span>
+          <span className="text-xs text-muted-foreground">Unlimited chats</span>
         </div>
-        <Button variant="outline" size="sm" onClick={() => queryClient.invalidateQueries({ queryKey: ['billing', 'usage'] })}>Refresh balance</Button>
+        <Button variant="outline" size="sm" disabled={refreshing} onClick={refreshBalance}>{refreshing ? 'Refreshing…' : 'Refresh balance'}</Button>
       </div>
 
       {meteringEnabled ? (
         <div className="space-y-5">
-          <div className="grid gap-4 sm:grid-cols-3">
+          <div className="grid gap-4 sm:grid-cols-2">
             <div className="rounded-2xl bg-secondary p-4"><p className="text-xs text-muted-foreground">Available credits</p><p className="mt-1 text-2xl font-semibold">{wallet.available}</p></div>
-            <div className="rounded-2xl bg-secondary p-4"><p className="text-xs text-muted-foreground">Trial / paid</p><p className="mt-1 text-lg font-semibold">{wallet.trialAvailable} / {wallet.paidAvailable}</p></div>
-            <div className="rounded-2xl bg-secondary p-4"><p className="text-xs text-muted-foreground">{plans.data?.localRuntimeEnabled ? 'Free hosted model calls' : 'Free design chats'}</p><p className="mt-1 text-lg font-semibold">{wallet.freeChatsUsed} / {wallet.freeChatsLimit} used</p></div>
+            <div className="rounded-2xl bg-secondary p-4"><p className="text-xs text-muted-foreground">Free / purchased credits</p><p className="mt-1 text-lg font-semibold">{wallet.trialAvailable} / {wallet.paidAvailable}</p></div>
           </div>
           <p className="text-sm text-muted-foreground">{wallet.reserved} credits reserved for running jobs. Credits are ₹1 of prepaid value and do not expire.</p>
-          {!plans.data?.localRuntimeEnabled && <p className="text-sm text-muted-foreground">Each free chat includes its requirements interview, one complete pipeline, and one PCB generation. Failed attempts can be retried without spending the included run.</p>}
+          <p className="text-sm text-muted-foreground">Create as many chats as you need. AI runs use your free or purchased credits, with the cost shown before generation.</p>
+          {Boolean(plans.data?.trialCredits) && <p className="text-sm text-muted-foreground">Verified accounts also receive {plans.data?.trialCredits} free credits once. This bonus does not renew each month.</p>}
+          {paymentNotice && <p role="status" className="rounded-xl bg-secondary p-3 text-sm">{paymentNotice}</p>}
           {plans.data?.billingMode === 'test' && <p className="text-sm text-muted-foreground">Stripe is in test mode. Checkout uses test cards and does not collect real money.</p>}
           <div className="grid gap-3 sm:grid-cols-3">
             {CREDIT_PACK_COPY.map((pack) => (
@@ -123,8 +179,8 @@ function UsageCard() {
             ))}
           </div>
           {buyError && <p className="text-sm text-destructive">{buyError}</p>}
-          {!billingEnabled && <p className="text-sm text-muted-foreground">Credit purchases are closed. Your included free allowance is still available.</p>}
-          <p className="text-xs text-muted-foreground">Payment confirmation updates your balance through Stripe; returning from checkout alone does not add credits.</p>
+          {!billingEnabled && <p className="text-sm text-muted-foreground">Credit purchases are closed. Your remaining free credits are still available.</p>}
+          <p className="text-xs text-muted-foreground">We confirm your payment with Stripe before adding credits. Refresh balance also checks for paid orders awaiting confirmation.</p>
         </div>
       ) : (
         <p className="rounded-2xl bg-secondary px-4 py-3 text-sm text-muted-foreground">

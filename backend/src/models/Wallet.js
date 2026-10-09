@@ -7,6 +7,8 @@ const walletSchema = new mongoose.Schema({
   trialReserved: { type: Number, default: 0 },
   paidReserved: { type: Number, default: 0 },
   trialGranted: { type: Boolean, default: false },
+  // Missing on old wallets; recover prior grants from their ledger once.
+  trialCreditsGranted: { type: Number, min: 0 },
 }, { timestamps: true });
 
 export const Wallet = mongoose.model('Wallet', walletSchema);

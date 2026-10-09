@@ -3,7 +3,7 @@ import { send } from '../utils/response.js';
 import { publicPlans } from '../config/plans.js';
 import { getUsageSummary } from '../services/billing.service.js';
 import { walletSummary } from '../services/credits.service.js';
-import { createCheckout, handleStripeEvent, verifyStripeEvent } from '../services/stripe.service.js';
+import { createCheckout, confirmCheckout, reconcilePendingPayments, handleStripeEvent, verifyStripeEvent } from '../services/stripe.service.js';
 import { CreditEntry } from '../models/CreditEntry.js';
 import { ApiError } from '../utils/ApiError.js';
 import { env } from '../config/env.js';
@@ -36,6 +36,14 @@ export const quote = asyncHandler(async (req, res) => {
 
 export const checkout = asyncHandler(async (req, res) => {
   send(res, { data: await createCheckout(req.user, req.body.packId) });
+});
+
+export const reconcile = asyncHandler(async (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
+  const result = req.body.sessionId
+    ? { payments: [await confirmCheckout(req.user, req.body.sessionId)], errors: [] }
+    : await reconcilePendingPayments(req.user);
+  send(res, { data: { ...result, wallet: await walletSummary(req.user) } });
 });
 
 export const webhook = asyncHandler(async (req, res) => {

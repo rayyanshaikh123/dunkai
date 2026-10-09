@@ -2,7 +2,7 @@ import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import mongoose from 'mongoose';
-import { MongoMemoryReplSet } from 'mongodb-memory-server';
+import { connectTestDatabase } from './helpers/database.js';
 import { app } from '../src/app.js';
 import { User } from '../src/models/User.js';
 import { Project } from '../src/models/Project.js';
@@ -23,11 +23,10 @@ import { deleteChat } from '../src/services/chat.service.js';
 import { reserveArtifactBytes, releaseArtifactBytes } from '../src/services/runtimeStorage.service.js';
 import { env } from '../src/config/env.js';
 
-let mongo, server, origin, user, other, project;
+let cleanup, server, origin, user, other, project;
 const secret = () => randomBytes(32).toString('hex');
 before(async () => {
-  mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
-  await mongoose.connect(mongo.getUri());
+  cleanup = await connectTestDatabase();
   await Promise.all([RuntimeDevice, RuntimePairing, RuntimeInference, AiJob, Wallet, AiCharge, CreditEntry, Usage].map((model) => model.init()));
   user = await User.create({ name: 'Runtime User', email: 'runtime@example.test', isVerified: true });
   other = await User.create({ name: 'Other User', email: 'other@example.test', isVerified: true });
@@ -35,7 +34,7 @@ before(async () => {
   server = app.listen(0, '127.0.0.1'); await new Promise((resolve) => server.once('listening', resolve));
   origin = 'http://127.0.0.1:' + server.address().port;
 });
-after(async () => { await new Promise((resolve) => server?.close(resolve)); await mongoose.disconnect(); await mongo?.stop(); });
+after(async () => { await new Promise((resolve) => server?.close(resolve)); await cleanup?.(); });
 async function deviceJob(action = 'run_workflow') {
   const token = secret(), lease = secret();
   const device = await RuntimeDevice.create({ user: user._id, name: 'Test computer', tokenHash: runtime.hashRuntimeSecret(token), expiresAt: new Date(Date.now() + 86400_000), ready: true, lastSeenAt: new Date(), capabilities: { boardSandbox: true } });
@@ -152,6 +151,7 @@ test('quota reservation is atomic under concurrent uploads', async () => {
 
 test('hosted gateway protects key, enforces token cap, caches concurrent retry and charges each real call once', async () => {
   const { device, job } = await deviceJob(); let calls = 0;
+  const startingBalance = (await walletSummary(user)).trialAvailable;
   const body = { model: 'ignored-client-model', messages: [{ role: 'user', content: 'Hello' }], max_tokens: 20000 };
   const mock = async (url, options) => {
     calls++; assert.equal(url, 'https://api.groq.com/openai/v1/chat/completions');
@@ -163,10 +163,13 @@ test('hosted gateway protects key, enforces token cap, caches concurrent retry a
   const answers = await Promise.all([runtimeCompletion(user, device, job, id, body, mock), runtimeCompletion(user, device, job, id, body, mock)]);
   assert.equal(calls, 1); assert.deepEqual(answers[0], answers[1]); assert.equal(JSON.stringify(answers).includes(env.groqApiKey), false);
   assert.equal((await AiCharge.findOne({ jobId: 'local-inference:' + job.jobId + ':' + id })).providerUsage[0].inputTokens, 20);
-  assert.equal((await walletSummary(user)).trialAvailable, 0);
+  assert.equal((await walletSummary(user)).trialAvailable, startingBalance - 2);
   for (let i = 0; i < 4; i++) assert.equal((await runtimeCompletion(user, device, job, secret(), body, mock)).status, 200);
-  assert.equal((await walletSummary(user)).freeChatsUsed, 5);
-  assert.equal((await runtimeCompletion(user, device, job, secret(), body, mock)).status, 402); assert.equal(calls, 5);
+  assert.equal((await walletSummary(user)).freeChatsLimit, null);
+  assert.equal((await runtimeCompletion(user, device, job, secret(), body, mock)).status, 200); assert.equal(calls, 6);
+  assert.equal((await walletSummary(user)).trialAvailable, startingBalance - 12);
+  await Wallet.updateOne({ user: user._id }, { $set: { trialAvailable: 0 } });
+  assert.equal((await runtimeCompletion(user, device, job, secret(), body, mock)).status, 402); assert.equal(calls, 6);
   await Wallet.updateOne({ user: user._id }, { $inc: { paidAvailable: 10 } });
   assert.equal((await runtimeCompletion(user, device, job, secret(), body, mock)).status, 200);
   assert.equal((await walletSummary(user)).paidAvailable, 8);

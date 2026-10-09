@@ -5,6 +5,7 @@ import { env } from './config/env.js';
 import { connectDatabase } from './config/database.js';
 import { initSocket } from './sockets/index.js';
 import { reconcileStaleJobs } from './services/reconcile.service.js';
+import { reconcilePendingPayments } from './services/stripe.service.js';
 
 // Opt-in only. Forcing public resolvers fixed `mongodb+srv` lookups on one
 // local network, but on a host it breaks every private name: docker-compose
@@ -16,6 +17,20 @@ const start = async () => {
     await connectDatabase();
     reconcileStaleJobs().catch((error) => console.error('Job reconciliation failed:', error));
     setInterval(() => reconcileStaleJobs().catch((error) => console.error('Job reconciliation failed:', error)), 5 * 60 * 1000).unref();
+    if (env.billingEnabled && env.stripeSecretKey) {
+      let checkingPayments = false;
+      const recoverPayments = async () => {
+        if (checkingPayments) return;
+        checkingPayments = true;
+        try {
+          const result = await reconcilePendingPayments();
+          if (result.errors.length) console.warn(`Payment reconciliation: ${result.errors.length} orders could not be confirmed; they will be retried`);
+        } catch (error) { console.error('Payment reconciliation failed:', error.message); }
+        finally { checkingPayments = false; }
+      };
+      recoverPayments();
+      setInterval(recoverPayments, 5 * 60 * 1000).unref();
+    }
 
     const server = http.createServer(app);
 
