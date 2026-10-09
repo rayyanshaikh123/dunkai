@@ -83,9 +83,14 @@ def llm_provider() -> str:
     return "openai" if _request_model.get() in OPENAI_MODELS else "groq"
 
 
+def selected_model() -> str | None:
+    """An explicit chat selection applies to every inference stage."""
+    return _request_model.get()
+
+
 def llm_model(model: str | None = None) -> str:
-    if llm_provider() == "openai":
-        return model if model in OPENAI_MODELS else _request_model.get()
+    if selected_model():
+        return selected_model()
     return model or os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 
 

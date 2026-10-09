@@ -28,7 +28,6 @@ import { accountApi, aiApi, billingApi, type ApiKeyStatus, type ByokProvider } f
 import {
   BOARD_PROVIDERS,
   DEFAULT_BOARD_PROVIDER,
-  hasStoredBoardProvider,
   readStoredBoardProvider,
   writeStoredBoardProvider,
   type BoardProviderId,
@@ -306,11 +305,9 @@ function SettingsContent() {
   // Hydrated in an effect: the stored choice only exists on the client, and
   // reading it during render would make the first paint disagree with the server's.
   const [boardProvider, setBoardProvider] = useState<BoardProviderId>(DEFAULT_BOARD_PROVIDER)
-  const [hasChoice, setHasChoice] = useState(false)
   useEffect(() => {
     setMounted(true)
     setBoardProvider(readStoredBoardProvider())
-    setHasChoice(hasStoredBoardProvider())
     // Earlier builds kept "BYOK" keys here in plaintext, and nothing ever read
     // them. Keys now live encrypted on the server; drop the stale copies.
     try {
@@ -322,14 +319,12 @@ function SettingsContent() {
 
   const changeBoardProvider = (next: BoardProviderId) => {
     setBoardProvider(next)
-    setHasChoice(true)
     writeStoredBoardProvider(next)
     toast.success('Board generation model updated')
   }
 
   const status = Object.fromEntries((providers.data?.boardProviders ?? []).map((p) => [p.id, p]))
-  const serverDefault = BOARD_PROVIDERS.find((p) => p.provider === providers.data?.defaultBoardProvider)
-  const shown = hasChoice ? BOARD_PROVIDERS.find((p) => p.id === boardProvider) : serverDefault
+  const shown = BOARD_PROVIDERS.find((p) => p.id === boardProvider)
   const shownStatus = shown ? status[shown.provider] : undefined
 
   return (
@@ -382,13 +377,12 @@ function SettingsContent() {
         {!providers.data?.localRuntimeEnabled && <Section
           icon={CircuitBoard}
           title="Board generation model"
-          description="Which model lays out the PCB once the pipeline hands off a design."
+          description="Auto uses your chat model for the complete design and PCB pipeline. Choose another provider only to override PCB generation."
         >
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="min-w-0 flex-1">
               <p className="text-sm font-medium">
-                {shown?.label ?? 'Server default'}
-                {!hasChoice && <span className="ml-2 text-xs font-normal text-muted-foreground">(server default)</span>}
+                {shown?.label ?? 'Auto · chat model'}
               </p>
               <p className="mt-0.5 text-sm text-muted-foreground">{shown?.hint ?? 'Applies to the next run.'}</p>
               {shownStatus && !shownStatus.available && (
@@ -396,7 +390,7 @@ function SettingsContent() {
               )}
             </div>
             <ProviderPicker
-              value={hasChoice ? boardProvider : (serverDefault?.id ?? boardProvider)}
+              value={boardProvider}
               onChange={changeBoardProvider}
               status={providers.data ? status : undefined}
               className="w-[210px] rounded-xl"

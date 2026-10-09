@@ -140,10 +140,14 @@ def stream_board(state: CircuitState, job_id: str) -> Generator[dict[str, Any], 
     out_dir = _output_root() / f"{_slug(design_name)}-{stamp}-{job_id[:8]}"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Per-request choice wins over the environment default. The env var stays
-    # meaningful as the server-wide fallback for callers that send no provider.
-    provider = state.get("designer_provider") or os.getenv("DESIGNER_PROVIDER") or "groq"
-    model = state.get("designer_model") or os.getenv("DESIGNER_MODEL") or None
+    # Auto keeps the chat's exact model for pin mapping, footprints and repairs.
+    from agents.credentials import llm_model
+    provider = state.get("designer_provider")
+    if not provider or provider == "auto":
+        model = state.get("designer_model") or state.get("llm_model") or llm_model()
+        provider = "openai" if model in ("gpt-4.1", "gpt-4.1-mini") else "groq"
+    else:
+        model = state.get("designer_model") or os.getenv("DESIGNER_MODEL") or None
     cmd = _designer_command(designer, out_dir, provider, model)
 
     yield {

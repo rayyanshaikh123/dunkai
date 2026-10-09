@@ -1,23 +1,6 @@
-/**
- * Board-generation options offered in the UI.
- *
- * This list mirrors dunkai-designer's provider registry (src/providers/index.mjs)
- * and BOARD_PROVIDERS in backend/src/config/providers.js. They have to agree:
- * the designer throws on an unknown name, and the backend validator turns that
- * into a 400 before a job is ever started.
- *
- * An OPTION is not the same thing as a provider. One provider could appear more
- * than once when the model is the real choice, so each entry carries its own `id` for the
- * select and localStorage, plus the `provider`/`model` pair actually sent to the
- * backend. Only `provider` is whitelisted server-side; `model` is validated by
- * the designer, which refuses anything above the 4.5 generation.
- *
- * `hint` is shown next to the name because the trade-off here is not abstract —
- * claude-code is the only agentic provider and the only one that has produced a
- * board that routed, while the OpenAI-compatible three are ~100x cheaper per run.
- */
+/** Auto follows the chat model; the other options are explicit PCB overrides. */
 
-export type BoardProviderId = 'claude-code' | 'anthropic' | 'gemini' | 'groq' | 'ollama' | 'openai'
+export type BoardProviderId = 'auto' | 'claude-code' | 'anthropic' | 'gemini' | 'groq' | 'ollama' | 'openai'
 
 export interface BoardProvider {
   /** Select value and localStorage key. Unique per OPTION, not per provider. */
@@ -33,6 +16,10 @@ export interface BoardProvider {
 }
 
 export const BOARD_PROVIDERS: readonly BoardProvider[] = [
+  {
+    id: 'auto', provider: 'auto', label: 'Auto · chat model',
+    hint: 'Uses the model selected in the chat for the entire design and PCB pipeline.',
+  },
   {
     id: 'openai',
     provider: 'openai',
@@ -80,9 +67,11 @@ export const BOARD_PROVIDERS: readonly BoardProvider[] = [
   },
 ] as const
 
-export const DEFAULT_BOARD_PROVIDER: BoardProviderId = 'groq'
+export const DEFAULT_BOARD_PROVIDER: BoardProviderId = 'auto'
 
-export const PROVIDER_STORAGE_KEY = 'dunkai-board-provider'
+// Previous builds persisted the server's Groq default. Start those clients on
+// Auto, so a stale preference cannot override their current chat model.
+export const PROVIDER_STORAGE_KEY = 'dunkai-board-provider-v2'
 
 export const isBoardProviderId = (value: unknown): value is BoardProviderId =>
   typeof value === 'string' && BOARD_PROVIDERS.some((p) => p.id === value)
@@ -105,12 +94,7 @@ export const readStoredBoardProvider = (): BoardProviderId => {
   }
 }
 
-/**
- * True once the user has picked a model in Settings. Until then a board run
- * sends no provider, and the server's DESIGNER_PROVIDER decides — on a hosted
- * deployment that is something the server can run, which the client-side
- * default (claude-code, which needs a CLI on the engine host) may not be.
- */
+/** Whether a user has saved a choice in the current settings version. */
 export const hasStoredBoardProvider = (): boolean => {
   if (typeof window === 'undefined') return false
   try {
@@ -130,11 +114,11 @@ export const writeStoredBoardProvider = (id: BoardProviderId): void => {
 
 /** The {provider, model} pair to send for an option id. */
 export const boardProviderRequest = (
-  id: BoardProviderId
+  id: BoardProviderId,
+  chatModel?: string
 ): { provider: string; model?: string } => {
+  if (id === 'auto') return { provider: 'auto', ...(chatModel ? { model: chatModel } : {}) }
   const option = BOARD_PROVIDERS.find((p) => p.id === id)
-  // Falling back to the id keeps a stale localStorage value working as the
-  // provider name it used to be, rather than starting a job with no provider.
-  if (!option) return { provider: id }
+  if (!option) return boardProviderRequest('auto', chatModel)
   return option.model ? { provider: option.provider, model: option.model } : { provider: option.provider }
 }

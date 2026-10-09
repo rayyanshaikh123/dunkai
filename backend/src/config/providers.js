@@ -50,6 +50,15 @@ export const BYOK_PROVIDER_IDS = Object.keys(BYOK_PROVIDERS);
 export const OPENAI_PIPELINE_MODELS = Object.freeze(['gpt-4.1', 'gpt-4.1-mini']);
 export const pipelineProviderForModel = (model) => typeof model === 'string' && model.startsWith('gpt-') ? 'openai' : 'groq';
 
+export const DEFAULT_PIPELINE_MODEL = 'openai/gpt-oss-120b';
+
+/** Resolve Auto before provider authorization, billing and queue submission. */
+export function resolveBoardSelection({ provider, model, chatModel, defaultModel = DEFAULT_PIPELINE_MODEL } = {}) {
+  if (provider && provider !== 'auto') return { provider, model };
+  const selected = model || chatModel || defaultModel;
+  return { provider: pipelineProviderForModel(selected), model: selected };
+}
+
 /**
  * Board generators (dunkai-designer --provider). `credential` is the key a
  * provider bills; `claude-code` has none — it spends the operator's Claude Code

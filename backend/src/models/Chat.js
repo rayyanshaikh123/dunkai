@@ -8,6 +8,8 @@ const chatSchema = new mongoose.Schema(
     pinned: { type: Boolean, default: false },
     messageCount: { type: Number, default: 0 },
     lastMessageAt: { type: Date, default: Date.now },
+    // Accepted pipeline selection, restored on reload and used for Auto PCB retries.
+    designModel: { type: String, maxlength: 120, default: null },
 
     // Server-only monthly entitlement. Kept on the chat so deleting a chat
     // never resets the account's monthly counter or transfers its allowance.

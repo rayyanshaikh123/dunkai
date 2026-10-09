@@ -94,9 +94,9 @@ def invoke_with_limits(
     not to whatever the design agents use).
     """
     try:
-        from .credentials import llm_provider, llm_model
+        from .credentials import llm_provider, llm_model, selected_model
     except ImportError:
-        from credentials import llm_provider, llm_model
+        from credentials import llm_provider, llm_model, selected_model
     if llm_provider() == "openai":
         # The OpenAI SDK handles its bounded retries. Never route a GPT key
         # to Groq, or switch a BYOK request to an operator-funded provider.
@@ -105,7 +105,10 @@ def invoke_with_limits(
 
     exhausted: list[str] = []
 
-    for candidate in candidate_models(model, fallbacks):
+    # A chosen chat model must not silently change after a rate limit.
+    model = llm_model(model)
+    candidates = [model] if selected_model() else candidate_models(model, fallbacks)
+    for candidate in candidates:
         for attempt in range(1, ATTEMPTS_PER_MODEL + 1):
             try:
                 result = call(candidate)
@@ -136,7 +139,8 @@ def invoke_with_limits(
             return result, candidate
 
     raise GroqQuotaExhausted(
-        "Groq's usage limit is reached for every available model ("
+        ("Groq's usage limit is reached for the selected model (" if selected_model()
+         else "Groq's usage limit is reached for every available model (")
         + "; ".join(exhausted)
         + "). Try again later, or pick a different model in the chat's model picker."
     )

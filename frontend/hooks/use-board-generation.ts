@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { aiApi } from '@/lib/api'
 import { useWorkspaceStore, type BoardArtifact } from '@/lib/store'
-import { boardProviderRequest, hasStoredBoardProvider, readStoredBoardProvider } from '@/lib/providers'
+import { boardProviderRequest, readStoredBoardProvider } from '@/lib/providers'
 
 /**
  * Board generation ("Generate PCB").
@@ -49,7 +49,7 @@ export function useBoardGeneration(projectId: string | null, chatId: string | nu
 
   const canGenerate = Boolean(projectId) && componentCount > 0 && boardJob.status !== 'running'
 
-  const generate = useCallback(async () => {
+  const generate = useCallback(async (pipelineModel?: string, pipelineChatId?: string | null) => {
     if (!projectId) return
 
     // Read through to the store rather than the captured `pcbIr` — see the
@@ -60,17 +60,11 @@ export function useBoardGeneration(projectId: string | null, chatId: string | nu
     cleanupRef.current?.()
 
     try {
-      // The stored id is an OPTION id, which is not always the provider name:
-      // two entries can differ only by model. boardProviderRequest is what
-      // splits one back into the {provider, model} pair the backend expects.
-      // No stored choice: send none, so the server's own default applies.
-      const capabilities = await aiApi.providers()
-      const selectedModel = useWorkspaceStore.getState().selectedModel
-      const gptSelected = ['gpt-4.1', 'gpt-4.1-mini'].includes(selectedModel)
-      const choice = capabilities.localRuntimeEnabled ? { provider: 'groq' }
-        : hasStoredBoardProvider() ? boardProviderRequest(readStoredBoardProvider())
-        : gptSelected ? { provider: 'openai', model: selectedModel } : {}
-      const res = await aiApi.generateBoard(projectId, chatId, choice)
+      // Automatic builds use the accepted pipeline's model, even if the user
+      // changes the picker while completion events are being processed.
+      const selectedModel = pipelineModel ?? useWorkspaceStore.getState().selectedModel
+      const choice = boardProviderRequest(readStoredBoardProvider(), selectedModel)
+      const res = await aiApi.generateBoard(projectId, pipelineChatId ?? chatId, choice)
       const jobId = res?.jobId
       if (!jobId) {
         failBoardJob('The server did not return a job id.')

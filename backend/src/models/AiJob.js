@@ -6,6 +6,8 @@ const aiJobSchema = new mongoose.Schema({
   project: { type: mongoose.Schema.Types.ObjectId, ref: 'Project', default: null, index: true },
   chat: { type: mongoose.Schema.Types.ObjectId, ref: 'Chat', default: null },
   action: { type: String, required: true },
+  provider: { type: String, default: null },
+  model: { type: String, default: null },
   execution: { type: String, enum: ['cloud', 'local'], default: 'cloud', index: true },
   device: { type: mongoose.Schema.Types.ObjectId, ref: 'RuntimeDevice', default: null, index: true },
   mode: { type: String, enum: ['hosted', 'byok'], default: 'hosted' },

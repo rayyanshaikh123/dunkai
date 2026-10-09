@@ -50,6 +50,12 @@ with use_credentials({"openai": "gpt-user-key"}, model="gpt-4.1"):
     check("GPT key reaches only its designer child", subprocess_env().get("OPENAI_API_KEY") == "gpt-user-key" and os.getenv("OPENAI_API_KEY") is None)
 check("GPT provider context resets", credentials.llm_provider() == "groq" and api_key("openai") is None)
 
+with use_credentials({"groq": "groq-user-key"}, model="openai/gpt-oss-20b"):
+    check("selected Groq model overrides every agent default",
+          credentials.llm_model("openai/gpt-oss-safeguard-20b") == "openai/gpt-oss-20b")
+with use_credentials({"openai": "gpt-user-key"}, model="gpt-4.1-mini"):
+    check("selected GPT mini overrides GPT-4.1 defaults", credentials.llm_model("gpt-4.1") == "gpt-4.1-mini")
+
 # ---- both import names share one ContextVar -------------------------------------
 # server.py/board.py import `agents.credentials`; the agents import `credentials`.
 pkg_credentials = importlib.import_module("agents.credentials")

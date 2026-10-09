@@ -16,6 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import groq_limits  # noqa: E402
+from credentials import use_credentials
 from groq_limits import GroqQuotaExhausted, invoke_with_limits, retry_after_seconds  # noqa: E402
 
 DAILY = (
@@ -123,6 +124,15 @@ except GroqQuotaExhausted:
 os.environ["GROQ_FALLBACK_MODELS"] = "openai/gpt-oss-20b,qwen/qwen3.8-27b"
 check("requested model is not duplicated",
       groq_limits.candidate_models("openai/gpt-oss-20b") == ["openai/gpt-oss-20b", "qwen/qwen3.8-27b"])
+
+with use_credentials({}, model="openai/gpt-oss-20b"):
+    call, calls = scripted({"openai/gpt-oss-20b": [DAILY]})
+    try:
+        invoke_with_limits(call, "openai/gpt-oss-120b", agent="test")
+        check("explicit selection cannot silently fall back", False)
+    except GroqQuotaExhausted as exc:
+        check("explicit selection cannot silently fall back",
+              calls == ["openai/gpt-oss-20b"] and "selected model" in str(exc), str(calls))
 
 print(f"\n{failures} FAILED" if failures else "\nall checks passed")
 sys.exit(1 if failures else 0)

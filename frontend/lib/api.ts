@@ -186,10 +186,10 @@ export const chatApi = {
 
 // ---- AI API ----
 export const aiApi = {
-  chat: (projectId: string, message: string, agentType?: string) =>
+  chat: (projectId: string, message: string, agentType?: string, model?: string) =>
     request('/ai/chat', {
       method: 'POST',
-      body: JSON.stringify({ projectId, message, agentType }),
+      body: JSON.stringify({ projectId, message, agentType, model }),
     }),
 
   codeChat: (projectId: string, files: any[], messages: any[], model?: string) =>
@@ -224,9 +224,7 @@ export const aiApi = {
    * Same endpoint, same Socket.io relay and same jobId contract as the chat
    * pipeline — only the action differs. The server reads its persisted IR.
    *
-   * `provider` and `model` are omitted when unset so the server-side
-   * DESIGNER_PROVIDER default still applies; sending an explicit null would
-   * override it with nothing.
+   * Auto uses the exact chat model; omitted values are resolved from the saved chat.
    */
   generateBoard: (
     projectId: string,

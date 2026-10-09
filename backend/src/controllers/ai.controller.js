@@ -24,7 +24,7 @@ import { enqueueAiJob, aiQueue, redisConnection } from '../services/queue.servic
 import { logActivity } from '../helpers/activity.js';
 import { notify } from '../helpers/notification.js';
 import { v4 as uuidv4 } from 'uuid';
-import { OPENAI_PIPELINE_MODELS, pipelineProviderForModel } from '../config/providers.js';
+import { OPENAI_PIPELINE_MODELS, pipelineProviderForModel, resolveBoardSelection } from '../config/providers.js';
 
 /**
  * Who pays for this request, reserved before it starts.
@@ -82,7 +82,7 @@ export const providers = asyncHandler(async (req, res) => {
     const device = devices.find((item) => item.preferred && item.connected && item.ready) || devices.find((item) => item.connected && item.ready);
     return send(res, { data: {
       localRuntimeEnabled: true, runtime: device || null, engineReachable: Boolean(device),
-      defaultBoardProvider: 'groq', boardProviders: [{ id: 'groq', label: 'Groq', available: Boolean(device?.capabilities?.boardSandbox && (device.mode === 'byok' || env.groqApiKey)), source: device?.mode === 'byok' ? 'byok' : 'hosted', reason: device ? null : 'Connect a computer in Settings' }],
+      defaultBoardProvider: 'auto', boardProviders: [{ id: 'groq', label: 'Groq', available: Boolean(device?.capabilities?.boardSandbox && (device.mode === 'byok' || env.groqApiKey)), source: device?.mode === 'byok' ? 'byok' : 'hosted', reason: device ? null : 'Connect a computer in Settings' }],
       chat: { byok: device?.mode === 'byok', hosted: Boolean(env.groqApiKey) },
     } });
   }
@@ -91,7 +91,7 @@ export const providers = asyncHandler(async (req, res) => {
   send(res, {
     data: {
       boardProviders: await boardProviderStatus(req.user, have),
-      defaultBoardProvider: caps?.default_board_provider ?? null,
+      defaultBoardProvider: 'auto',
       chat: { byok: have.has('groq'), openaiByok: have.has('openai'), hosted: caps ? Boolean(caps.platform_keys?.groq) : null },
       engineReachable: Boolean(caps),
     },
@@ -352,6 +352,14 @@ export const runStream = asyncHandler(async (req, res) => {
   // run (only reachable from an older client that doesn't send chatId yet).
   const chat = req.body.chatId ? await getChat(req.body.chatId, req.user) : null;
   if (chat && String(chat.project) !== String(project?._id)) throw ApiError.forbidden('Chat does not belong to this project');
+  const action = req.body.action || 'run_workflow';
+  if (action === 'generate_board') {
+    Object.assign(req.body, resolveBoardSelection({
+      provider: req.body.provider, model: req.body.model, chatModel: chat?.designModel,
+    }));
+  } else if (!req.body.model && chat?.designModel) {
+    req.body.model = chat.designModel;
+  }
   if (env.localRuntimeEnabled) {
     const { queueLocalJob } = await import('../services/runtime.service.js');
     const projectPayload = chat ? { ...chat.toObject(), project_name: project?.title, name: project?.title } : project?.toObject() || {};
@@ -366,13 +374,19 @@ export const runStream = asyncHandler(async (req, res) => {
 
   // Metered before the job id exists, so a refused request (quota spent,
   // provider not available here) is a plain 4xx the client can show.
-  const action = req.body.action || 'run_workflow';
   const jobId = uuidv4();
   const { credentials } = await prepareAiRequest(req, { jobId, action, provider: req.body.provider });
   try {
-    await AiJob.create({ jobId, user: req.user._id, project: project?._id, chat: chat?._id, action, status: env.aiQueueEnabled ? 'queued' : 'running' });
+    await AiJob.create({ jobId, user: req.user._id, project: project?._id, chat: chat?._id, action,
+      provider: req.body.provider || pipelineProviderForModel(req.body.model), model: req.body.model,
+      status: env.aiQueueEnabled ? 'queued' : 'running' });
+    if (chat && action !== 'generate_board' && req.body.model) {
+      chat.designModel = req.body.model;
+      await chat.save();
+    }
   } catch (error) {
     await settleCharge(jobId, null);
+    await AiJob.updateOne({ jobId }, { $set: { status: 'failed', error: 'Could not save the AI request' } }).catch(() => {});
     throw error;
   }
   const io = req.app.get('io');

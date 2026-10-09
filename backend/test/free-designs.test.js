@@ -103,6 +103,8 @@ test('the website run-stream endpoint charges a pipeline and PCB against credits
       if (url.pathname.endsWith('/capabilities')) return Response.json({ data: { default_board_provider: 'groq', board_providers: { groq: true }, platform_keys: { groq: true } } });
       const payload = JSON.parse(options.body);
       assert.equal(payload.project._id, String(chat._id));
+      assert.equal(payload.model, 'openai/gpt-oss-20b');
+      if (payload.action === 'generate_board') assert.equal(payload.provider, 'groq');
       const data = payload.action === 'generate_board' ? board : pipeline;
       return new Response(`event: complete\ndata: ${JSON.stringify({ jobId: payload.jobId, data, status: 'completed' })}\n\n`, { headers: { 'content-type': 'text/event-stream' } });
     }
@@ -110,7 +112,9 @@ test('the website run-stream endpoint charges a pipeline and PCB against credits
   };
   try {
     for (const action of ['run_workflow', 'generate_board']) {
-      const response = await fetch(origin + '/api/v1/ai/run-stream', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + signAccessToken(a.user) }, body: JSON.stringify({ projectId: String(a.project._id), chatId: String(chat._id), action, messages: [{ role: 'user', content: 'Build a USB sensor board' }] }) });
+      const response = await fetch(origin + '/api/v1/ai/run-stream', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + signAccessToken(a.user) }, body: JSON.stringify({ projectId: String(a.project._id), chatId: String(chat._id), action,
+        ...(action === 'run_workflow' ? { model: 'openai/gpt-oss-20b' } : { provider: 'auto' }),
+        messages: [{ role: 'user', content: 'Build a USB sensor board' }] }) });
       const accepted = await response.json();
       assert.equal(response.status, 202, accepted.message);
       const jobId = accepted.data.jobId;
@@ -121,9 +125,12 @@ test('the website run-stream endpoint charges a pipeline and PCB against credits
         await new Promise(resolve => setTimeout(resolve, 100));
       }
       assert.equal(job.status, 'completed', job.error);
+      assert.equal(job.model, 'openai/gpt-oss-20b');
+      assert.equal(job.provider, 'groq');
       assert.equal((await AiCharge.findOne({ jobId })).debitedCredits, action === 'run_workflow' ? 30 : 101);
     }
     assert.equal((await walletSummary(a.user)).available, 369);
+    assert.equal((await Chat.findById(chat._id)).designModel, 'openai/gpt-oss-20b');
   } finally {
     globalThis.fetch = realFetch;
     await new Promise(resolve => server.close(resolve));

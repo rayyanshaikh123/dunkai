@@ -121,6 +121,7 @@ function createClient(target, { model, timeoutMs, maxTokens }) {
     for (let attempt = 1; attempt <= 4; attempt++) {
       const controller = new AbortController()
       const timer = setTimeout(() => controller.abort(), timeoutMs)
+      let retryAfter = null
       try {
         const res = await fetch(url, {
           method: "POST",
@@ -133,6 +134,7 @@ function createClient(target, { model, timeoutMs, maxTokens }) {
         })
 
         const raw = await res.text()
+        retryAfter = res.headers.get("retry-after")
 
         if (!res.ok) {
           // 402 ("not included in your free usage") and 404 (no such model) are
@@ -150,9 +152,16 @@ function createClient(target, { model, timeoutMs, maxTokens }) {
           continue
         }
 
-        const parsed = JSON.parse(raw)
-        const choice = parsed.choices?.[0]
-        const content = choice?.message?.content ?? ""
+        let parsed
+        try { parsed = JSON.parse(raw) }
+        catch {
+          const error = new Error(`${cfg.label} returned an empty or incomplete JSON response. Retry PCB generation from the BOM.`)
+          error.code = 'INVALID_PROVIDER_RESPONSE'
+          throw error
+        }
+        const choice = parsed?.choices?.[0]
+        const content = typeof choice?.message?.content === 'string' ? choice.message.content : ""
+        if (choice?.message?.refusal) throw new Error(`${cfg.label} declined the PCB generation request`)
 
         // gpt-oss-class models spend the token budget in a separate `reasoning`
         // field. Empty content with a length stop is truncation, not refusal,
@@ -165,7 +174,12 @@ function createClient(target, { model, timeoutMs, maxTokens }) {
                 `the reply was cut off before the answer — raise DESIGNER_MAX_TOKENS`
             )
           }
-          throw new Error(`${cfg.label} returned an empty reply`)
+          const error = new Error(`${cfg.label} returned an empty reply. Retry PCB generation from the BOM.`)
+          error.code = 'INVALID_PROVIDER_RESPONSE'
+          throw error
+        }
+        if (json && choice?.finish_reason === 'length') {
+          throw new Error(`${cfg.label} cut off the PCB response at its token limit. Increase DESIGNER_MAX_TOKENS on the AI engine and retry from the BOM.`)
         }
 
         return { content, usage: parsed.usage }
@@ -180,10 +194,10 @@ function createClient(target, { model, timeoutMs, maxTokens }) {
         }
 
         const worthRetrying =
-          err.name === "AbortError" || Boolean(network) || isRetryableMessage(lastError.message)
+          err.name === "AbortError" || Boolean(network) || err.code === 'INVALID_PROVIDER_RESPONSE' || isRetryableMessage(lastError.message)
         if (attempt === 4 || !worthRetrying) throw lastError
 
-        const wait = backoffMs(attempt)
+        const wait = backoffMs(attempt, retryAfter)
         note(
           `  ${cfg.label} ${network ?? "request failed"}, retrying in ` +
             `${Math.round(wait / 1000)}s (attempt ${attempt}/4)`

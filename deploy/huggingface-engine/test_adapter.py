@@ -91,11 +91,12 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
                 try:
                     async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://space.test", timeout=90) as client:
                         response = await client.post("/api/v1/supervisor/stream", headers={"x-supervisor-token": "shared-secret"},
-                                                     json={"action": "run_workflow", "project": {}, "messages": [{"role": "user", "content": "Design a temperature sensor board"}]})
+                                                     json={"action": "run_workflow", "model": "openai/gpt-oss-20b", "project": {}, "messages": [{"role": "user", "content": "Design a temperature sensor board"}]})
                     self.assertEqual(response.status_code, 200, response.text)
                     self.assertIn("event: complete", response.text)
                     self.assertIn("How should this sensor board be powered?", response.text)
                     self.assertGreaterEqual(len(requests), 2)
+                    self.assertTrue(all(request["model"] == "openai/gpt-oss-20b" for request in requests))
                     self.assertFalse(app.state.busy)
                     self.assertIsNone(engine.process)
                     with patch.dict(os.environ, {"OPENAI_API_BASE": f"http://127.0.0.1:{mock.server_port}/v1"}):

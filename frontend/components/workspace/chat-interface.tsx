@@ -324,6 +324,7 @@ export function ChatInterface({ projectId }: { projectId: string }) {
           }>,
         ])
         if (!isMounted) return
+        if (typeof chatData.designModel === 'string' && chatData.designModel) setSelectedModel(chatData.designModel)
 
         // Mongoose stores these as Mixed with `default: {}`, so an untouched
         // field arrives as `{}` (or absent) rather than null. `{}` must not
@@ -443,7 +444,7 @@ export function ChatInterface({ projectId }: { projectId: string }) {
         }
 
         if (!jobId) {
-          const chatRes = (await aiApi.chat(projectId, request)) as { reply?: string }
+          const chatRes = (await aiApi.chat(projectId, request, undefined, selectedModel)) as { reply?: string }
           const hasReply = Boolean(chatRes?.reply?.trim())
           const replyText = hasReply ? (chatRes.reply as string) : NO_OUTPUT
           setMessages((prev) => [
@@ -656,7 +657,7 @@ export function ChatInterface({ projectId }: { projectId: string }) {
           ) {
             postAssistant(BOARD_STARTING, targetChatId)
 
-            await generateBoard()
+            await generateBoard(selectedModel, targetChatId)
 
             // generate() either reached startBoardJob, which means there is a
             // jobId for the watcher to match on, or it failed before getting

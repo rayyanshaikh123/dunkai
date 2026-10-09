@@ -70,7 +70,7 @@ export function ModelSelector({
   disabled = false,
   className = '',
 }: ModelSelectorProps) {
-  const current = AVAILABLE_MODELS.find((m) => m.id === value) || AVAILABLE_MODELS[0]
+  const current = AVAILABLE_MODELS.find((m) => m.id === value) || AVAILABLE_MODELS.find((m) => m.id === DEFAULT_MODEL_ID)!
 
   return (
     <DropdownMenu>
