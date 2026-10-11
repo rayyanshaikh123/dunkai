@@ -134,5 +134,13 @@ with use_credentials({}, model="openai/gpt-oss-20b"):
         check("explicit selection cannot silently fall back",
               calls == ["openai/gpt-oss-20b"] and "selected model" in str(exc), str(calls))
 
+with use_credentials({}, model="openai/gpt-oss-20b"):
+    call, calls = scripted({"openai/gpt-oss-safeguard-20b": [DAILY], "openai/gpt-oss-120b": [None]})
+    result, used = invoke_with_limits(call, "openai/gpt-oss-safeguard-20b", agent="test",
+                                      fallbacks=["openai/gpt-oss-120b"], follow_selection=False)
+    check("follow_selection=False keeps the given model and its fallbacks",
+          calls == ["openai/gpt-oss-safeguard-20b", "openai/gpt-oss-120b"] and used == "openai/gpt-oss-120b",
+          str(calls))
+
 print(f"\n{failures} FAILED" if failures else "\nall checks passed")
 sys.exit(1 if failures else 0)

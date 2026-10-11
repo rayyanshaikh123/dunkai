@@ -83,7 +83,12 @@ def _describe_wait(seconds: float | None) -> str:
 
 
 def invoke_with_limits(
-    call: Callable[[str], T], model: str, *, agent: str, fallbacks: list[str] | None = None
+    call: Callable[[str], T],
+    model: str,
+    *,
+    agent: str,
+    fallbacks: list[str] | None = None,
+    follow_selection: bool = True,
 ) -> tuple[T, str]:
     """Run ``call(model_name)``, handling Groq rate limits.
 
@@ -92,6 +97,12 @@ def invoke_with_limits(
     ``fallbacks`` overrides GROQ_FALLBACK_MODELS for callers that need their
     own list (the safety classifier falls back to a classifier-capable model,
     not to whatever the design agents use).
+
+    ``follow_selection=False`` keeps ``model`` and its fallbacks even when the
+    chat has an explicit model selected. It is for gates whose output the user
+    never reads (the safety classifier): the selection is about design quality,
+    and locking a gate to one model turns that model's daily limit into a
+    blocked chat while other models on the same key still have quota.
     """
     try:
         from .credentials import llm_provider, llm_model, selected_model
@@ -106,8 +117,10 @@ def invoke_with_limits(
     exhausted: list[str] = []
 
     # A chosen chat model must not silently change after a rate limit.
-    model = llm_model(model)
-    candidates = [model] if selected_model() else candidate_models(model, fallbacks)
+    locked = follow_selection and bool(selected_model())
+    if follow_selection:
+        model = llm_model(model)
+    candidates = [model] if locked else candidate_models(model, fallbacks)
     for candidate in candidates:
         for attempt in range(1, ATTEMPTS_PER_MODEL + 1):
             try:
@@ -139,7 +152,7 @@ def invoke_with_limits(
             return result, candidate
 
     raise GroqQuotaExhausted(
-        ("Groq's usage limit is reached for the selected model (" if selected_model()
+        ("Groq's usage limit is reached for the selected model (" if locked
          else "Groq's usage limit is reached for every available model (")
         + "; ".join(exhausted)
         + "). Try again later, or pick a different model in the chat's model picker."

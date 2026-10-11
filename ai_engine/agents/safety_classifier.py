@@ -21,6 +21,15 @@ blocks the run. An ``allow`` below SAFETY_MIN_ALLOW_CONFIDENCE is downgraded
 to ``review``: the prompt tells the model not to allow when unsure, and this
 enforces it when the model allows anyway with a low confidence.
 
+Which model classifies
+----------------------
+On Groq, always SAFETY_MODEL and its fallbacks, then the chat's selected model
+as a last resort -- not the selected model alone. The selection is about design
+quality; the gate's answer is never shown. Locking the gate to the selection
+meant one model's daily limit blocked every turn as "unavailable" while the
+classifier models on the same key still had quota. An OpenAI selection keeps
+the selected model, so a GPT key is never swapped for the operator's Groq key.
+
 What the requester may see
 --------------------------
 Only the verdict, never the category or the reasoning — the prompt is explicit
@@ -42,9 +51,9 @@ from pathlib import Path
 from typing import Any, Callable
 
 try:
-    from .groq_limits import invoke_with_limits
+    from .groq_limits import GroqQuotaExhausted, invoke_with_limits
 except ImportError:  # imported as a top-level module by the supervisor
-    from groq_limits import invoke_with_limits
+    from groq_limits import GroqQuotaExhausted, invoke_with_limits
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +93,10 @@ BLOCK_MESSAGES = {
 }
 
 
+class MissingApiKey(RuntimeError):
+    """No key for the active provider. The message is meant for the user."""
+
+
 @dataclass(frozen=True)
 class SafetyVerdict:
     verdict: str
@@ -92,6 +105,9 @@ class SafetyVerdict:
     reasoning: str = ""
     model: str | None = None
     conversation: list[dict[str, str]] = field(default_factory=list)
+    #: Shown instead of the generic "unavailable" text when the user can act on
+    #: the cause (a used-up quota, a missing key). Never set for reject/review.
+    notice: str | None = None
 
     @property
     def blocks(self) -> bool:
@@ -99,7 +115,7 @@ class SafetyVerdict:
 
     @property
     def message(self) -> str | None:
-        return BLOCK_MESSAGES.get(self.verdict)
+        return self.notice or BLOCK_MESSAGES.get(self.verdict)
 
     def public(self) -> dict[str, Any]:
         """The only part of the verdict the requester may see."""
@@ -213,17 +229,19 @@ def _call_model(model: str, transcript: str) -> str:
         from usage_meter import USAGE_CALLBACK
 
     try:
-        from credentials import llm_api_key, llm_model
+        from credentials import llm_api_key
         from llm import create_chat_model
     except ImportError:
-        from .credentials import llm_api_key, llm_model
+        from .credentials import llm_api_key
         from .llm import create_chat_model
     try:
         api_key = llm_api_key()
     except EnvironmentError as exc:
-        raise RuntimeError(str(exc)) from exc
+        raise MissingApiKey(str(exc)) from exc
     llm = create_chat_model(
-        model=llm_model(model),
+        # Already resolved by invoke_with_limits: a Groq candidate from
+        # classifier_models(), or the selected model on OpenAI.
+        model=model,
         api_key=api_key,
         temperature=0,
         # Room for the model's reasoning as well as the small JSON answer.
@@ -234,6 +252,17 @@ def _call_model(model: str, transcript: str) -> str:
     )
     reply = llm.invoke([SystemMessage(content=PROMPT), HumanMessage(content=transcript)])
     return str(reply.content or "")
+
+
+def classifier_fallbacks() -> list[str]:
+    """SAFETY_FALLBACK_MODELS, then the chat's selected model as a last resort."""
+    try:
+        from credentials import selected_model
+    except ImportError:
+        from .credentials import selected_model
+    chosen = selected_model()
+    extra = [chosen] if chosen and chosen != SAFETY_MODEL and chosen not in SAFETY_FALLBACK_MODELS else []
+    return SAFETY_FALLBACK_MODELS + extra
 
 
 # ---- entry point -------------------------------------------------------------------------
@@ -256,11 +285,18 @@ def classify(
             lambda name: invoke(name, transcript),
             SAFETY_MODEL,
             agent="Safety Classifier",
-            fallbacks=SAFETY_FALLBACK_MODELS,
+            fallbacks=classifier_fallbacks(),
+            follow_selection=False,
         )
     except Exception as exc:  # noqa: BLE001 - any failure blocks the run
         logger.error("[Safety Classifier] unavailable: %s", exc)
-        return SafetyVerdict(verdict="unavailable", reasoning=f"classifier call failed: {exc}"[:500], conversation=turns)
+        actionable = isinstance(exc, (GroqQuotaExhausted, MissingApiKey))
+        return SafetyVerdict(
+            verdict="unavailable",
+            reasoning=f"classifier call failed: {exc}"[:500],
+            conversation=turns,
+            notice=str(exc) if actionable else None,
+        )
 
     try:
         parsed = parse_verdict(reply)

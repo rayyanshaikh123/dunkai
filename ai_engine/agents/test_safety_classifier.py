@@ -116,6 +116,43 @@ v = sc.classify([], "request text", call=primary_limited)
 check("a rate-limited safety model falls back to its own fallback list",
       v.verdict == "allow" and tried == [sc.SAFETY_MODEL, sc.SAFETY_FALLBACK_MODELS[0]], str(tried))
 
+from credentials import use_credentials  # noqa: E402
+
+# The bug this guards: a chat with a Groq model selected ran the gate on that
+# model alone, so its daily limit blocked every turn as "unavailable".
+with use_credentials({}, model="openai/gpt-oss-120b"):
+    tried.clear()
+    v = sc.classify([], "request text", call=primary_limited)
+check("a selected Groq model does not lock the gate to that model",
+      v.verdict == "allow" and tried == [sc.SAFETY_MODEL, sc.SAFETY_FALLBACK_MODELS[0]], str(tried))
+
+
+def only_selected_left(model: str, transcript: str) -> str:
+    tried.append(model)
+    if model != "qwen/qwen3.8-27b":
+        raise RuntimeError(DAILY)
+    return reply(verdict="allow", category=None, confidence=0.9, reasoning="fine")
+
+
+with use_credentials({}, model="qwen/qwen3.8-27b"):
+    tried.clear()
+    v = sc.classify([], "request text", call=only_selected_left)
+check("the selected model is the gate's last resort",
+      v.verdict == "allow" and tried[-1] == "qwen/qwen3.8-27b" and tried[0] == sc.SAFETY_MODEL, str(tried))
+
+with use_credentials({}, model="openai/gpt-oss-120b"):
+    v = sc.classify([], "request text", call=always_limited)
+check("a used-up quota tells the user why, not 'temporarily unavailable'",
+      v.blocks and "usage limit" in v.message and v.message != sc.BLOCK_MESSAGES["unavailable"], v.message)
+check("an unexplained failure keeps the neutral unavailable message",
+      sc.classify([], "request text", call=boom).message == sc.BLOCK_MESSAGES["unavailable"])
+
+with use_credentials({}, model="gpt-4.1"):
+    tried.clear()
+    sc.classify([], "request text", call=lambda m, t: tried.append(m) or reply(
+        verdict="allow", category=None, confidence=0.9, reasoning="fine"))
+check("an OpenAI selection is classified by that model, never routed to Groq", tried == ["gpt-4.1"], str(tried))
+
 check("fenced JSON is accepted", sc.parse_verdict("```json\n" + reply(verdict="allow", category=None,
       confidence=0.9, reasoning="x") + "\n```")["verdict"] == "allow")
 
