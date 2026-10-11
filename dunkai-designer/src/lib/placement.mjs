@@ -109,7 +109,8 @@ function connectivityOrder(refs, assignments) {
  *   packed as a block with its support parts in a row directly beneath it.
  * @returns {{ placement: Record<string, {x: number, y: number}>, widthMm: number, heightMm: number }}
  */
-export function packParts(partSizes, assignments, minimum, attach = {}) {
+export function packParts(partSizes, assignments, minimum, attach = {}, gapMm = GAP_MM) {
+  const gap = Number.isFinite(gapMm) ? Math.max(GAP_MM, gapMm) : GAP_MM
   // Collapse each part and its attached support parts into one block.
   const kidsOf = {}
   for (const [kid, host] of Object.entries(attach)) {
@@ -128,7 +129,7 @@ export function packParts(partSizes, assignments, minimum, attach = {}) {
   const refs = Object.keys(sizes)
   const order = connectivityOrder(refs, assignments)
   const widest = Math.max(0, ...refs.map((r) => sizes[r].w))
-  const area = refs.reduce((sum, r) => sum + (sizes[r].w + GAP_MM) * (sizes[r].h + GAP_MM), 0)
+  const area = refs.reduce((sum, r) => sum + (sizes[r].w + gap) * (sizes[r].h + gap), 0)
 
   // Start from the requested width (or what the widest part needs) and widen
   // until the packed board is no taller than it is wide.
@@ -139,18 +140,18 @@ export function packParts(partSizes, assignments, minimum, attach = {}) {
     let row = { items: [], width: 0, height: 0 }
     for (const ref of order) {
       const { w, h } = sizes[ref]
-      const needed = row.items.length ? row.width + GAP_MM + w : w
+      const needed = row.items.length ? row.width + gap + w : w
       if (row.items.length && needed > usable) {
         rows.push(row)
         row = { items: [], width: 0, height: 0 }
       }
       row.items.push(ref)
-      row.width = row.items.length === 1 ? w : row.width + GAP_MM + w
+      row.width = row.items.length === 1 ? w : row.width + gap + w
       row.height = Math.max(row.height, h)
     }
     if (row.items.length) rows.push(row)
 
-    const contentHeight = rows.reduce((sum, r) => sum + r.height, 0) + GAP_MM * Math.max(0, rows.length - 1)
+    const contentHeight = rows.reduce((sum, r) => sum + r.height, 0) + gap * Math.max(0, rows.length - 1)
     const height = Math.max(minimum.heightMm, contentHeight + 2 * MARGIN_MM)
     if (height > width * 1.1 && attempt < 11) {
       width *= 1.15
@@ -175,9 +176,9 @@ export function packParts(partSizes, assignments, minimum, attach = {}) {
           placement[kid] = { x: round(kx + partSizes[kid].w / 2), y: round(ky) }
           kx += partSizes[kid].w + KID_GAP_MM
         }
-        x += block.w + GAP_MM
+        x += block.w + gap
       }
-      top -= r.height + GAP_MM
+      top -= r.height + gap
     }
     return { placement, widthMm: Math.ceil(width), heightMm: Math.ceil(height) }
   }

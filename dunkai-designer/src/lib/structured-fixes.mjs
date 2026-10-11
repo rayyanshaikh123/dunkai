@@ -23,8 +23,8 @@ const better = (next, prev) =>
 
 export async function applyStructuredFixes(structured, outputs, build) {
   const sizes = footprintSizes(outputs.circuitJson)
+  const attach = Object.fromEntries((structured.support ?? []).map((s) => [s.ref, s.near]))
   if (Object.keys(sizes).length) {
-    const attach = Object.fromEntries((structured.support ?? []).map((s) => [s.ref, s.near]))
     const packed = packParts(
       sizes,
       structured.mapping.assignments,
@@ -57,6 +57,61 @@ export async function applyStructuredFixes(structured, outputs, build) {
     const grown = await build()
     if (grown.stats.errors > outputs.stats.errors) break
     outputs = grown
+  }
+
+  // A valid source net can still have an unrouted PCB port. Give the
+  // autorouter a few more spacious, deterministic placements before failing a
+  // required-device connection. This keeps the electrical contract strict:
+  // a route error is never waived; the board is rebuilt until it routes or the
+  // final required-connection gate reports the open pin.
+  const unrouted = (result) => result.circuitJson.filter((e) => e.type === "pcb_port_not_connected_error").length
+  if (unrouted(outputs) > 0 && Object.keys(sizes).length) {
+    const base = { widthMm: structured.size.widthMm, heightMm: structured.size.heightMm }
+    const snapshot = () => ({
+      widthMm: structured.size.widthMm,
+      heightMm: structured.size.heightMm,
+      placement: structured.size.placement ? { ...structured.size.placement } : null,
+    })
+    const restore = (saved) => {
+      structured.size.widthMm = saved.widthMm
+      structured.size.heightMm = saved.heightMm
+      if (saved.placement) structured.size.placement = { ...saved.placement }
+      else delete structured.size.placement
+    }
+    let best = outputs
+    let bestLayout = snapshot()
+    let current = outputs
+    for (const gap of [5, 7, 10]) {
+      const packed = packParts(sizes, structured.mapping.assignments, base, attach, gap)
+      structured.size.widthMm = packed.widthMm
+      structured.size.heightMm = packed.heightMm
+      structured.size.placement = packed.placement
+      note(`  ${unrouted(current)} PCB port(s) remain unrouted — retrying placement with ${gap}mm part spacing`)
+      stage("E", "running", `retry routing with ${gap}mm part spacing`)
+      await structured.emit()
+      current = await build()
+      const routeErrors = unrouted(current)
+      const bestRouteErrors = unrouted(best)
+      if (routeErrors < bestRouteErrors ||
+          (routeErrors === bestRouteErrors && (current.stats.errors < best.stats.errors ||
+            (current.stats.errors === best.stats.errors && current.stats.traces > best.stats.traces)))) {
+        best = current
+        bestLayout = snapshot()
+      }
+      if (routeErrors === 0) {
+        best = current
+        bestLayout = snapshot()
+        break
+      }
+    }
+    if (best !== current) {
+      restore(bestLayout)
+      await structured.emit()
+      outputs = await build()
+    } else {
+      restore(bestLayout)
+      outputs = best
+    }
   }
   return outputs
 }
