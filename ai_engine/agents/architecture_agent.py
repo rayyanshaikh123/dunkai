@@ -36,6 +36,7 @@ This module's own code only:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import sys
@@ -62,6 +63,8 @@ except ImportError:  # imported as a top-level module by the supervisor
 # qwen/qwen3.6-27b -- override via GROQ_MODEL if/when it's retired.
 DEFAULT_MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
 
+logger = logging.getLogger(__name__)
+
 ALLOWED_CATEGORIES = {
     "Processing", "Power", "Communication", "Input", "Output", "Sensor",
     "Storage", "Security", "Memory", "Clock", "Expansion", "Network",
@@ -76,7 +79,23 @@ ALLOWED_INTERFACES = {
 }
 
 # Spellings of an interface the model uses that are not the canonical form.
-_INTERFACE_SYNONYMS = {"1-wire": "OneWire", "1wire": "OneWire", "one-wire": "OneWire", "one wire": "OneWire"}
+# Only spellings of the SAME interface belong here. Anything that needs a
+# judgement ("Clock" may be an RTC's I2C link or a crystal's oscillator pins)
+# goes back to the model through the repair retry in _call_validated.
+_INTERFACE_SYNONYMS = {
+    "1-wire": "OneWire", "1wire": "OneWire", "one-wire": "OneWire", "one wire": "OneWire",
+    "iic": "I2C", "i²c": "I2C", "twi": "I2C", "smbus": "I2C",
+    "qspi": "SPI", "quad spi": "SPI", "quad-spi": "SPI",
+    "serial": "UART", "usart": "UART", "rs232": "UART", "rs-232": "UART", "ttl serial": "UART",
+    "wi-fi": "WiFi", "wlan": "WiFi", "802.11": "WiFi",
+    "bluetooth": "BLE", "bluetooth le": "BLE", "bluetooth low energy": "BLE",
+    "usb-c": "USB", "usb c": "USB", "usb 2.0": "USB",
+    "can bus": "CAN", "canbus": "CAN", "can-bus": "CAN",
+    "sdmmc": "SDIO", "sd/mmc": "SDIO",
+    "analog input": "Analog", "analogue": "Analog", "analog output": "Analog",
+    "digital": "GPIO", "digital io": "GPIO", "digital i/o": "GPIO",
+    "power supply": "Power", "supply": "Power", "vcc": "Power",
+}
 
 # The model names subsystems in its own words, and a screen is the standard
 # example: it reports "Display" where this taxonomy files it under "Output".
@@ -495,6 +514,35 @@ def _call_groq(system_prompt: str, user_content: str, *, model: str | None = Non
 
 
 
+#: One extra model call when a reply uses a value outside the allowed lists.
+_REPAIR_ATTEMPTS = 1
+
+
+def _call_validated(prompt: str, content: str, validate, *, model: str | None, stage: str):
+    """Call the model, parse and validate; on a vocabulary error, ask once more.
+
+    A single unsupported value ("Clock" as an edge interface) used to abort the
+    whole pipeline. The repair turn quotes the exact error and the allowed
+    values, so the model corrects that value with the full design in view
+    rather than us guessing a mapping. A second failure still raises.
+    """
+    reply = _call_groq(prompt, content, model=model)
+    for attempt in range(_REPAIR_ATTEMPTS + 1):
+        try:
+            return validate(json.loads(_strip_code_fence(reply)))
+        except ValueError as exc:
+            if attempt == _REPAIR_ATTEMPTS:
+                raise
+            logger.warning("[Architecture Agent] %s reply rejected (%s); asking the model to correct it.", stage, exc)
+            reply = _call_groq(prompt, (
+                f"{content}\n\nYour previous reply was rejected: {exc}.\n"
+                f"Allowed edge interfaces: {', '.join(sorted(ALLOWED_INTERFACES))}.\n"
+                f"Allowed categories: {', '.join(sorted(ALLOWED_CATEGORIES))}.\n"
+                "Return the complete corrected JSON, using only these values. Choose the interface the "
+                f"connection actually uses (for example an RTC talks I2C).\nPrevious reply:\n{reply}"
+            ), model=model)
+
+
 def _validate_subsystems(subsystems: list[dict[str, Any]]) -> list[dict[str, Any]]:
     validated = []
     for subsystem in subsystems:
@@ -553,24 +601,20 @@ def infer_subsystems(
             context += f"Existing subsystems (keep what's still valid, adjust per the revision): {json.dumps(existing_subsystems)}\n"
         user_content = context + "\nRequirements:\n" + user_content
 
-    reply = _call_groq(
-        SUBSYSTEM_INFERENCE_PROMPT,
-        user_content,
-        model=model,
+    return _call_validated(
+        SUBSYSTEM_INFERENCE_PROMPT, user_content,
+        lambda parsed: _validate_subsystems(parsed.get("subsystems", [])),
+        model=model, stage="subsystem",
     )
-    parsed = json.loads(_strip_code_fence(reply))
-    return _validate_subsystems(parsed.get("subsystems", []))
 
 
 def build_graph(subsystems: list[dict[str, Any]], *, model: str | None = None) -> dict[str, Any]:
     """Stage 2: ask the model to wire the validated subsystems into a graph."""
-    reply = _call_groq(
-        GRAPH_CONSTRUCTION_PROMPT,
-        json.dumps({"subsystems": subsystems}),
-        model=model,
+    graph = _call_validated(
+        GRAPH_CONSTRUCTION_PROMPT, json.dumps({"subsystems": subsystems}),
+        lambda parsed: _validate_graph({"nodes": parsed.get("nodes", []), "edges": parsed.get("edges", [])}),
+        model=model, stage="graph",
     )
-    parsed = json.loads(_strip_code_fence(reply))
-    graph = _validate_graph({"nodes": parsed.get("nodes", []), "edges": parsed.get("edges", [])})
 
     # Re-shape into the React Flow node/edge format. This is pure structural
     # re-formatting of what the model already decided -- it does not choose
