@@ -31,11 +31,11 @@ interface BOMViewProps {
 }
 
 /**
- * Indicative only, and deliberately a named constant rather than a live rate:
- * nothing in the pipeline fetches FX, so this converts a USD figure for reading
- * convenience and must never be presented as a quoted price.
+ * Indicative mid-market snapshot checked on 2026-10-11. Supplier settlement
+ * rates, shipping, import charges and tax will differ.
  */
-const USD_TO_INR = 85.0;
+const USD_TO_INR = 96.64;
+const USD_TO_INR_AS_OF = '2026-10-11';
 
 // ---- Types that mirror the Python BOM output ----
 interface BomRow {
@@ -64,6 +64,7 @@ interface BomRow {
   mfr_part?: string;
   lcsc?: string;
   stock?: string | number;
+  moq?: string | number;
   status?: string;
   status_reason?: string;
   subsystem?: string;
@@ -72,6 +73,10 @@ interface BomRow {
   pcb_references?: string[];
   via_reference?: string;
   source_url?: string;
+  price_source_name?: string;
+  price_source_url?: string;
+  price_basis?: string;
+  price_checked_at?: string;
 }
 
 interface BomData {
@@ -121,7 +126,7 @@ const extendedPriceUsd = (r: BomRow): number | null => {
 
 const formatINR = (usd: number) =>
   `₹${(usd * USD_TO_INR).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-const formatUSD = (usd: number) => `$${usd.toFixed(2)}`;
+const formatUSD = (usd: number) => `$${usd > 0 && usd < 0.01 ? usd.toFixed(4) : usd.toFixed(2)}`;
 
 export function BOMView({ projectId }: BOMViewProps) {
   const aiOutput = useWorkspaceStore((s) => s.aiOutput);
@@ -206,7 +211,7 @@ export function BOMView({ projectId }: BOMViewProps) {
   /** Both currencies are exported, so the file does not depend on the toggle. */
   const buildCsv = () =>
     [
-      ['Designator', 'Component', 'Subsystem', 'Placement', 'PCB Interfaces', 'Via', 'Qty', 'Category', 'Unit Cost (USD)', 'Unit Cost (INR)', 'Availability', 'Status', 'Notes'].join(','),
+      ['Designator', 'Component', 'Subsystem', 'Placement', 'PCB Interfaces', 'Via', 'Qty', 'Category', 'Unit Cost (USD)', 'Unit Cost (INR)', 'MOQ', 'Price Source', 'Price Basis', 'Price Checked', 'Availability', 'Status', 'Notes'].join(','),
       ...rows.map((r) => {
         const unit = unitPriceUsd(r);
         return [
@@ -218,8 +223,12 @@ export function BOMView({ projectId }: BOMViewProps) {
           r.via_reference ?? '',
           String(quantityOf(r)),
           r.category ?? '',
-          unit === null ? '' : unit.toFixed(2),
+          unit === null ? '' : unit.toFixed(4),
           unit === null ? '' : (unit * USD_TO_INR).toFixed(2),
+          r.moq ?? '',
+          r.price_source_url ?? '',
+          r.price_basis ?? '',
+          r.price_checked_at ?? '',
           String(r.availability ?? r.stock ?? ''),
           r.status ?? '',
           r.assembly ?? r.status_reason ?? '',
@@ -261,7 +270,7 @@ export function BOMView({ projectId }: BOMViewProps) {
                 onClick={() => setCurrency((c) => (c === 'USD' ? 'INR' : 'USD'))}
                 title={
                   currency === 'USD'
-                    ? `Show indicative INR at ${USD_TO_INR}/USD`
+                    ? `Show indicative INR at ${USD_TO_INR} INR/USD (checked ${USD_TO_INR_AS_OF})`
                     : 'Show the source USD prices'
                 }
               >
@@ -341,13 +350,17 @@ export function BOMView({ projectId }: BOMViewProps) {
                   </p>
                   <p className="text-muted-foreground">{row.assembly ?? row.status_reason}</p>
                   {row.source_url?.startsWith('https://') && <a className="text-accent underline" href={row.source_url} target="_blank" rel="noopener noreferrer">Manufacturer documentation</a>}
+                  {row.price_source_url?.startsWith('https://') && <a className="ml-3 text-accent underline" href={row.price_source_url} target="_blank" rel="noopener noreferrer">{row.price_source_name ?? 'Price source'} · {row.price_checked_at ?? 'snapshot'}</a>}
                 </div>
               ))}
             </div>
           )}
           {summaryObj?.cost_complete === false && (
-            <p className="text-xs text-muted-foreground">The cost below covers priced parts only. {summaryObj.unpriced_references?.length ?? 0} parts need supplier quotes; they are included in the BOM.</p>
+            <p className="text-xs text-muted-foreground">The subtotal covers parts with sourced prices. {summaryObj.unpriced_references?.length ?? 0} line items still have no reliable supplier price and are left blank rather than guessed.</p>
           )}
+          <p className="text-[11px] text-muted-foreground">
+            Supplier price and stock snapshots are indicative and may change. Shipping, customs, local taxes, supplier currency markup and minimum order quantities can change checkout cost. INR display uses {USD_TO_INR} INR/USD as of {USD_TO_INR_AS_OF}.
+          </p>
           <div className="grid grid-cols-3 gap-4">
             <div className="bg-secondary rounded-lg border border-border p-4">
               <p className="text-xs text-muted-foreground uppercase tracking-wider">Total Items</p>
@@ -403,10 +416,14 @@ export function BOMView({ projectId }: BOMViewProps) {
                         ) : '—'}
                       </TableCell>
                       <TableCell className="h-10 text-xs font-semibold text-foreground">
-                        {unit === null ? '—' : money(unit)}
+                        {unit === null ? '—' : <>
+                          {money(unit)}
+                          {item.price_source_url?.startsWith('https://') && <a className="block text-[10px] font-normal text-accent underline" title={item.price_basis ?? 'Supplier price snapshot'} href={item.price_source_url} target="_blank" rel="noopener noreferrer">{item.price_source_name ?? 'Price source'}{item.price_checked_at ? ` · ${item.price_checked_at}` : ''}</a>}
+                        </>}
                       </TableCell>
                       <TableCell className="h-10 text-xs text-accent">
-                        {item.availability ?? item.stock ?? '—'}
+                        {item.availability ?? (item.stock != null ? item.stock : '—')}
+                        {item.moq != null ? <span className="block text-[10px] text-muted-foreground">MOQ {item.moq}</span> : null}
                       </TableCell>
                     </TableRow>
                   );

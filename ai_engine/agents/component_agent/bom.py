@@ -60,6 +60,10 @@ BOM_COLUMNS = [
     "extended_price_usd",
     "stock",
     "moq",
+    "price_source_name",
+    "price_source_url",
+    "price_basis",
+    "price_checked_at",
     "score",
     "status",
     "status_reason",
@@ -429,7 +433,9 @@ class BOMGenerator:
 
         return {
             "total_line_items": len(rows),
-            "total_cost_usd": round(total_cost, 2) if any(r.get("extended_price_usd") is not None for r in rows) else None,
+            # Preserve sub-cent per-part estimates (headers and passives can
+            # cost less than $0.01). The UI formats tiny prices to four places.
+            "total_cost_usd": round(total_cost, 4) if any(r.get("extended_price_usd") is not None for r in rows) else None,
             "unfilled_references": unfilled,
             "flagged_references": flagged,
             "shared_part_groups": shared_part_groups,

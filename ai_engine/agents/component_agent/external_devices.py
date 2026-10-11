@@ -86,6 +86,42 @@ POWER_MANAGERS = ("solar_manager", "usb_manager")
 import student_water
 PROFILES.update(student_water.PROFILES)
 
+# Supplier list-price snapshots (USD), checked 2026-10-11. They are attached
+# to the documented hardware profiles rather than inferred from an LLM reply.
+# Checkout totals in India may differ after FX markup, shipping, customs and tax.
+PRICE_SNAPSHOT_DATE = "2026-10-11"
+PRICE_SNAPSHOTS = {
+    "tds": {"unit_price_usd": 11.80, "price_source_url": "https://www.dfrobot.com/product-1662.html", "price_source_name": "DFRobot", "price_basis": "Manufacturer list price, quantity 1"},
+    "ph": {"unit_price_usd": 39.50, "price_source_url": "https://www.dfrobot.com/product-1782.html", "price_source_name": "DFRobot", "price_basis": "Manufacturer list price, quantity 1"},
+    "conductivity": {"unit_price_usd": 199.00, "price_source_url": "https://www.dfrobot.com/product-2565.html", "price_source_name": "DFRobot", "price_basis": "Manufacturer list price, quantity 1"},
+    "battery": {"unit_price_usd": 24.50, "price_source_url": "https://www.adafruit.com/product/353", "price_source_name": "Adafruit", "price_basis": "Manufacturer list price, quantity 1"},
+    "solar": {"unit_price_usd": 9.00, "price_source_url": "https://www.dfrobot.com/product-1774.html", "price_source_name": "DFRobot", "price_basis": "Manufacturer list price, quantity 1"},
+    "solar_manager": {"unit_price_usd": 7.90, "price_source_url": "https://www.dfrobot.com/product-1712.html", "price_source_name": "DFRobot", "price_basis": "Manufacturer list price, quantity 1"},
+    "usb_manager": {"unit_price_usd": 8.95, "price_source_url": "https://www.adafruit.com/product/6106", "price_source_name": "Adafruit", "price_basis": "Manufacturer list price, quantity 1"},
+    "logic_regulator": {"unit_price_usd": 0.1486, "price_source_url": "https://www.lcsc.com/product-detail/C404027.html", "price_source_name": "LCSC", "price_basis": "Supplier unit price at MOQ 5", "moq": 5, "lcsc": "C404027"},
+    "water_controller": {"unit_price_usd": 6.00, "price_source_url": "https://www.raspberrypi.com/products/raspberry-pi-pico/", "price_source_name": "Raspberry Pi", "price_basis": "Manufacturer stated list price, quantity 1"},
+    "water_adc": {"unit_price_usd": 1.4406, "price_source_url": "https://www.lcsc.com/product-detail/C37593.html", "price_source_name": "LCSC", "price_basis": "Supplier unit price, quantity 1", "moq": 1, "lcsc": "C37593"},
+    "water_turbidity": {"unit_price_usd": 9.90, "price_source_url": "https://www.dfrobot.com/product-1394.html", "price_source_name": "DFRobot", "price_basis": "Manufacturer list price, quantity 1"},
+    "water_temperature": {"unit_price_usd": 9.95, "price_source_url": "https://www.adafruit.com/product/381", "price_source_name": "Adafruit", "price_basis": "Manufacturer list price, quantity 1"},
+    "water_pump_driver": {"unit_price_usd": 5.95, "price_source_url": "https://www.adafruit.com/product/3297", "price_source_name": "Adafruit", "price_basis": "Manufacturer list price, quantity 1"},
+    "water_pump": {"unit_price_usd": 2.50, "price_source_url": "https://www.dfrobot.com/product-2647.html", "price_source_name": "DFRobot", "price_basis": "Manufacturer list price, quantity 1"},
+    "water_display": {"unit_price_usd": 17.50, "price_source_url": "https://www.adafruit.com/product/326", "price_source_name": "Adafruit", "price_basis": "Manufacturer list price, quantity 1"},
+    "water_buzzer_driver": {"unit_price_usd": 4.95, "price_source_url": "https://www.adafruit.com/product/5791", "price_source_name": "Adafruit", "price_basis": "Manufacturer list price, quantity 1"},
+    "water_buzzer": {"unit_price_usd": 0.95, "price_source_url": "https://www.adafruit.com/product/1739", "price_source_name": "Adafruit", "price_basis": "Manufacturer list price, quantity 1"},
+}
+
+CONNECTOR_PRICE_SNAPSHOTS = {
+    2: {"mfr_part": "PZ254V-11-02P", "manufacturer": "XFCN", "lcsc": "C492401", "unit_price_usd": 0.0135, "moq": 50, "stock": 2546100, "price_source_url": "https://www.lcsc.com/product-detail/C492401.html"},
+    3: {"mfr_part": "PZ254V-11-03P", "manufacturer": "XFCN", "lcsc": "C2937625", "unit_price_usd": 0.0190, "moq": 50, "stock": 942900, "price_source_url": "https://www.lcsc.com/product-detail/C2937625.html"},
+    4: {"mfr_part": "PZ254V-11-04P", "manufacturer": "XFCN", "lcsc": "C492403", "unit_price_usd": 0.0274, "moq": 20, "stock": 1015880, "price_source_url": "https://www.lcsc.com/product-detail/C492403.html"},
+}
+
+RESISTOR_PRICE_SNAPSHOT = {
+    "mfr_part": "RC0603FR-0710KL", "manufacturer": "YAGEO", "lcsc": "C98220",
+    "unit_price_usd": 0.0034, "moq": 100, "stock": 5066100,
+    "price_source_url": "https://www.lcsc.com/product-detail/C98220.html",
+}
+
 PATTERNS = {
     "tds": r"\b(tds|total dissolved solids)\b",
     "ph": r"\b(ph|acidity)\b",
@@ -329,11 +365,16 @@ def profile_row(request, quantity=1):
     """An external-device BOM row is not an orderable JLCPCB chip candidate."""
     key = request["external_key"]
     profile = PROFILES.get(request.get("device_profile"))
+    price = PRICE_SNAPSHOTS.get(request.get("device_profile"), {})
+    unit_price = price.get("unit_price_usd")
     row = {
         "reference": request["reference"], "node_id": request["node_id"],
         "subsystem": request["subsystem"], "category": request["category"],
-        "build_quantity": quantity, "unit_price_usd": None, "extended_price_usd": None,
-        "stock": None, "moq": None, "lcsc": None, "score": None, "shared_with": "",
+        "build_quantity": quantity, "unit_price_usd": unit_price,
+        "extended_price_usd": round(unit_price * quantity, 4) if unit_price is not None else None,
+        "stock": price.get("stock"), "moq": price.get("moq"), "lcsc": price.get("lcsc"), "score": None, "shared_with": "",
+        "price_source_url": price.get("price_source_url"), "price_source_name": price.get("price_source_name"),
+        "price_basis": price.get("price_basis"), "price_checked_at": PRICE_SNAPSHOT_DATE,
         "external": (profile or {}).get("external", key != "logic_regulator"), "required": True, "external_key": key,
     }
     if profile is None:
@@ -342,7 +383,11 @@ def profile_row(request, quantity=1):
         return row
     row.update({name: copy.deepcopy(profile.get(name)) for name in ("manufacturer", "mfr_part", "description", "source_url", "board_profile")})
     row.update(package=profile.get("package", "External module / device"),
-               status="DOCUMENTED_DEFAULT", status_reason="Documented student-project default. Price and availability need a supplier quote.",
+               status="DOCUMENTED_DEFAULT", status_reason=(
+                   f"Documented student-project default. Supplier price snapshot checked {PRICE_SNAPSHOT_DATE}; shipping, import duties, taxes, currency markup and minimum orders are not included."
+                   if unit_price is not None else
+                   "Documented student-project default. No reliable supplier price snapshot is available; price is left blank rather than guessed."
+               ),
                datasheet_url=profile["source_url"], device_profile=key,
                assembly=profile["assembly"], includes=profile.get("includes", []),
                electrical={name: copy.deepcopy(value) for name, value in profile.items() if name.endswith(("_v", "_a"))})
@@ -351,13 +396,21 @@ def profile_row(request, quantity=1):
 
 def connector_row(device, reference, profile):
     sensor = profile == "student-sensor-3p"
+    pins = 3 if sensor or profile == "student-digital-3p" else 4 if profile == "student-i2c-4p" else 2
+    price = CONNECTOR_PRICE_SNAPSHOTS.get(pins, {})
+    quantity = device.get("build_quantity", 1)
+    unit_price = price.get("unit_price_usd")
     return {
         "reference": reference, "subsystem": f"{device['subsystem']} PCB interface", "category": "Expansion",
-        "mfr_part": "1x3 2.54mm through-hole header" if sensor else "1x2 2.54mm through-hole header",
-        "package": "HDR-3-P2.54" if sensor else "HDR-2-P2.54", "board_profile": profile,
-        "build_quantity": device.get("build_quantity", 1), "unit_price_usd": None, "extended_price_usd": None,
-        "stock": None, "status": "DOCUMENTED_DEFAULT", "external": False,
-        "status_reason": "Generic PCB header with a custom harness, not a direct Gravity/JST mating connector. Verify cable pin order.",
+        "mfr_part": price.get("mfr_part", "1x3 2.54mm through-hole header" if pins == 3 else f"1x{pins} 2.54mm through-hole header"),
+        "manufacturer": price.get("manufacturer"), "lcsc": price.get("lcsc"),
+        "package": f"HDR-{pins}-P2.54", "board_profile": profile,
+        "build_quantity": quantity, "unit_price_usd": unit_price,
+        "extended_price_usd": round(unit_price * quantity, 4) if unit_price is not None else None,
+        "stock": price.get("stock"), "moq": price.get("moq"), "price_source_name": "LCSC" if price else None,
+        "price_source_url": price.get("price_source_url"), "price_basis": f"LCSC unit price at MOQ {price.get('moq')}" if price else None,
+        "price_checked_at": PRICE_SNAPSHOT_DATE, "status": "DOCUMENTED_DEFAULT", "external": False,
+        "status_reason": f"Supplier price snapshot checked {PRICE_SNAPSHOT_DATE}; MOQ is shown separately. Generic 2.54mm through-hole male header with a custom harness, not a direct Gravity/JST mating connector. Verify cable pin order.",
         "device_reference": device["reference"], "required": True,
     }
 
@@ -384,10 +437,18 @@ def add_interfaces(rows):
                 number = 1
                 while f"R{number}" in used: number += 1
                 rref = f"R{number}"; used.add(rref)
-                rows.append({"reference": rref, "mfr_part": "10k 1% 0603 resistor", "package": "0603", "board_profile": "student-divider-10k",
+                quantity = device.get("build_quantity", 1)
+                unit_price = RESISTOR_PRICE_SNAPSHOT["unit_price_usd"]
+                rows.append({"reference": rref, "mfr_part": RESISTOR_PRICE_SNAPSHOT["mfr_part"], "manufacturer": RESISTOR_PRICE_SNAPSHOT["manufacturer"],
+                             "lcsc": RESISTOR_PRICE_SNAPSHOT["lcsc"], "description": "10kΩ ±1%, 100mW, 0603 thick-film resistor",
+                             "package": "0603", "board_profile": "student-divider-10k",
                              "subsystem": f"{device['subsystem']} voltage divider ({leg})", "category": "Expansion", "build_quantity": device.get("build_quantity", 1),
-                             "divider_for": key, "divider_leg": leg, "unit_price_usd": None, "extended_price_usd": None, "stock": None,
-                             "required": True, "external": False, "status": "DOCUMENTED_DEFAULT", "status_reason": "1:1 voltage divider; quote the physical resistors with the PCB parts."})
+                             "divider_for": key, "divider_leg": leg, "unit_price_usd": unit_price, "extended_price_usd": round(unit_price * quantity, 4),
+                             "stock": RESISTOR_PRICE_SNAPSHOT["stock"], "moq": RESISTOR_PRICE_SNAPSHOT["moq"],
+                             "price_source_name": "LCSC", "price_source_url": RESISTOR_PRICE_SNAPSHOT["price_source_url"],
+                             "price_basis": f"LCSC unit price at MOQ {RESISTOR_PRICE_SNAPSHOT['moq']}", "price_checked_at": PRICE_SNAPSHOT_DATE,
+                             "required": True, "external": False, "status": "DOCUMENTED_DEFAULT",
+                             "status_reason": f"1:1 voltage divider. LCSC price snapshot checked {PRICE_SNAPSHOT_DATE}; MOQ is shown separately."})
     manager = next((r for r in rows if r.get("device_profile") in POWER_MANAGERS), None)
     for device in rows:
         if device.get("device_profile") in ("battery", "solar") and manager:

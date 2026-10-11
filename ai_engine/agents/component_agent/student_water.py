@@ -141,7 +141,7 @@ def prepare(architecture, requirements, profiles, allow_power_defaults=True, use
     profiles.update(PROFILES)
     result["component_recipe"] = "student-water-v1"
     assumptions = result.setdefault("assumptions", [])
-    note = "Unspecified student water-project hardware uses documented modules and an RP2040 Pico W carrier. Physical devices are retained; module interfaces and 5V/3.3V rails are explicit. Prices require supplier quotes. This is not a certified drinking-water treatment design."
+    note = "Unspecified student water-project hardware uses documented modules and an RP2040 Pico W carrier. Physical devices are retained; module interfaces and 5V/3.3V rails are explicit. Available list-price snapshots are indicative and exclude shipping, import charges and tax; any missing prices remain explicitly unpriced. This is not a certified drinking-water treatment design."
     if note not in assumptions: assumptions.append(note)
     ids = {n["id"] for n in nodes}
 

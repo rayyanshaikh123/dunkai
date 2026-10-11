@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from external_devices import add_interfaces, prepare_architecture
+from external_devices import add_interfaces, prepare_architecture, profile_row
 
 
 class ExternalDevicePowerPathTests(unittest.TestCase):
@@ -42,6 +42,30 @@ class ExternalDevicePowerPathTests(unittest.TestCase):
         }])
         self.assertEqual(rows[0]["pcb_references"], ["J1"])
         self.assertEqual(rows[1]["board_profile"], "student-sensor-3p")
+
+    def test_documented_water_device_rows_carry_sourced_prices(self):
+        request = {
+            "reference": "U1", "node_id": "tds", "subsystem": "TDS Sensor",
+            "category": "Sensor", "external_key": "tds", "device_profile": "tds",
+        }
+        row = profile_row(request, quantity=2)
+        self.assertEqual(row["unit_price_usd"], 11.8)
+        self.assertEqual(row["extended_price_usd"], 23.6)
+        self.assertEqual(row["price_source_name"], "DFRobot")
+        self.assertTrue(row["price_source_url"].startswith("https://"))
+        self.assertEqual(row["price_checked_at"], "2026-10-11")
+
+    def test_interface_rows_include_exact_priced_headers_and_divider_resistors(self):
+        sensor = profile_row({
+            "reference": "U1", "node_id": "turbidity", "subsystem": "Turbidity Sensor",
+            "category": "Sensor", "external_key": "water_turbidity", "device_profile": "water_turbidity",
+        })
+        rows = add_interfaces([sensor])
+        header = next(row for row in rows if row["reference"].startswith("J"))
+        resistors = [row for row in rows if row["reference"].startswith("R")]
+        self.assertEqual((header["lcsc"], header["unit_price_usd"], header["moq"]), ("C2937625", 0.019, 50))
+        self.assertEqual(len(resistors), 2)
+        self.assertTrue(all(row["lcsc"] == "C98220" and row["unit_price_usd"] == 0.0034 and row["moq"] == 100 for row in resistors))
 
 
 if __name__ == "__main__":
