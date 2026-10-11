@@ -46,6 +46,9 @@ BOM_COLUMNS = [
     "candidate_category",
     "manufacturer",
     "mfr_part",
+    # Exact purchasable MPN for documented generic PCB interfaces. The board
+    # profile must keep its canonical mfr_part identity for validation.
+    "supplier_mfr_part",
     # The JLCPCB/LCSC catalogue number. Carried so the DOWNSTREAM PCB module can
     # resolve a part by a known-good identifier instead of re-deriving it from
     # the MPN string. That re-derivation goes through jlcsearch's free-text

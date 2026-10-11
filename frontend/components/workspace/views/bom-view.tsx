@@ -62,6 +62,7 @@ interface BomRow {
   extended_price_usd?: number | string;
   build_quantity?: number;
   mfr_part?: string;
+  supplier_mfr_part?: string;
   lcsc?: string;
   stock?: string | number;
   moq?: string | number;
@@ -211,12 +212,13 @@ export function BOMView({ projectId }: BOMViewProps) {
   /** Both currencies are exported, so the file does not depend on the toggle. */
   const buildCsv = () =>
     [
-      ['Designator', 'Component', 'Subsystem', 'Placement', 'PCB Interfaces', 'Via', 'Qty', 'Category', 'Unit Cost (USD)', 'Unit Cost (INR)', 'MOQ', 'Price Source', 'Price Basis', 'Price Checked', 'Availability', 'Status', 'Notes'].join(','),
+      ['Designator', 'Component', 'Supplier Part', 'Subsystem', 'Placement', 'PCB Interfaces', 'Via', 'Qty', 'Category', 'Unit Cost (USD)', 'Unit Cost (INR)', 'MOQ', 'Price Source', 'Price Basis', 'Price Checked', 'Availability', 'Status', 'Notes'].join(','),
       ...rows.map((r) => {
         const unit = unitPriceUsd(r);
         return [
           r.reference ?? r.designator ?? '',
           r.mfr_part ?? r.component ?? r.part_number ?? '',
+          r.supplier_mfr_part ?? '',
           r.subsystem ?? '',
           r.external ? 'External device' : 'PCB',
           (r.pcb_references ?? []).join(' / '),
@@ -403,6 +405,7 @@ export function BOMView({ projectId }: BOMViewProps) {
                       </TableCell>
                       <TableCell className="h-10 text-xs text-foreground">
                         {item.mfr_part ?? item.part_number ?? item.component ?? item.subsystem ?? 'Selection required'}
+                        {item.supplier_mfr_part ? <span className="text-muted-foreground block text-[10px]">Supplier part: {item.supplier_mfr_part}</span> : null}
                         {item.subsystem ? <span className="text-muted-foreground block text-[10px]">{item.subsystem}{item.external ? ' · External device' : ''}</span> : null}
                         {item.manufacturer ? <span className="text-muted-foreground block text-[10px]">{item.manufacturer}</span> : null}
                         {item.status && item.status !== 'OK' && item.status !== 'DOCUMENTED_DEFAULT' ? <span className="text-amber-500 block text-[10px]">{item.status_reason ?? item.status}</span> : null}

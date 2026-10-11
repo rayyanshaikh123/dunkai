@@ -106,6 +106,7 @@ PRICE_SNAPSHOTS = {
     "water_pump_driver": {"unit_price_usd": 5.95, "price_source_url": "https://www.adafruit.com/product/3297", "price_source_name": "Adafruit", "price_basis": "Manufacturer list price, quantity 1"},
     "water_pump": {"unit_price_usd": 2.50, "price_source_url": "https://www.dfrobot.com/product-2647.html", "price_source_name": "DFRobot", "price_basis": "Manufacturer list price, quantity 1"},
     "water_display": {"unit_price_usd": 17.50, "price_source_url": "https://www.adafruit.com/product/326", "price_source_name": "Adafruit", "price_basis": "Manufacturer list price, quantity 1"},
+    "water_led": {"unit_price_usd": 1.20, "price_source_url": "https://www.dfrobot.com/product-133.html", "price_source_name": "DFRobot", "price_basis": "Manufacturer list price, quantity 1"},
     "water_buzzer_driver": {"unit_price_usd": 4.95, "price_source_url": "https://www.adafruit.com/product/5791", "price_source_name": "Adafruit", "price_basis": "Manufacturer list price, quantity 1"},
     "water_buzzer": {"unit_price_usd": 0.95, "price_source_url": "https://www.adafruit.com/product/1739", "price_source_name": "Adafruit", "price_basis": "Manufacturer list price, quantity 1"},
 }
@@ -402,7 +403,10 @@ def connector_row(device, reference, profile):
     unit_price = price.get("unit_price_usd")
     return {
         "reference": reference, "subsystem": f"{device['subsystem']} PCB interface", "category": "Expansion",
-        "mfr_part": price.get("mfr_part", "1x3 2.54mm through-hole header" if pins == 3 else f"1x{pins} 2.54mm through-hole header"),
+        # The documented PCB profile validates this stable logical identity and
+        # package. Keep the supplier's exact SKU alongside it for procurement.
+        "mfr_part": f"1x{pins} 2.54mm through-hole header",
+        "supplier_mfr_part": price.get("mfr_part"),
         "manufacturer": price.get("manufacturer"), "lcsc": price.get("lcsc"),
         "package": f"HDR-{pins}-P2.54", "board_profile": profile,
         "build_quantity": quantity, "unit_price_usd": unit_price,
@@ -429,8 +433,6 @@ def add_interfaces(rows):
         device["pcb_references"] = [reference]
         profile = connector or ("student-sensor-3p" if key in ("tds", "ph") else "student-power-2p")
         row = connector_row(device, reference, profile)
-        if profile == "student-i2c-4p": row.update(mfr_part="1x4 2.54mm through-hole header", package="HDR-4-P2.54")
-        if profile == "student-digital-3p": row.update(mfr_part="1x3 2.54mm through-hole header", package="HDR-3-P2.54")
         rows.append(row)
         if PROFILES.get(key, {}).get("divider"):
             for leg in ("top", "bottom"):

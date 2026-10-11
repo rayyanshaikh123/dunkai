@@ -55,6 +55,15 @@ class ExternalDevicePowerPathTests(unittest.TestCase):
         self.assertTrue(row["price_source_url"].startswith("https://"))
         self.assertEqual(row["price_checked_at"], "2026-10-11")
 
+    def test_led_module_uses_manufacturer_price_snapshot(self):
+        row = profile_row({
+            "reference": "U1", "node_id": "led", "subsystem": "LED Indicator",
+            "category": "Output", "external_key": "water_led", "device_profile": "water_led",
+        })
+        self.assertEqual(row["unit_price_usd"], 1.20)
+        self.assertEqual(row["price_source_name"], "DFRobot")
+        self.assertEqual(row["price_source_url"], "https://www.dfrobot.com/product-133.html")
+
     def test_interface_rows_include_exact_priced_headers_and_divider_resistors(self):
         sensor = profile_row({
             "reference": "U1", "node_id": "turbidity", "subsystem": "Turbidity Sensor",
@@ -64,6 +73,9 @@ class ExternalDevicePowerPathTests(unittest.TestCase):
         header = next(row for row in rows if row["reference"].startswith("J"))
         resistors = [row for row in rows if row["reference"].startswith("R")]
         self.assertEqual((header["lcsc"], header["unit_price_usd"], header["moq"]), ("C2937625", 0.019, 50))
+        self.assertEqual(header["mfr_part"], "1x3 2.54mm through-hole header")
+        self.assertEqual(header["package"], "HDR-3-P2.54")
+        self.assertEqual(header["supplier_mfr_part"], "PZ254V-11-03P")
         self.assertEqual(len(resistors), 2)
         self.assertTrue(all(row["lcsc"] == "C98220" and row["unit_price_usd"] == 0.0034 and row["moq"] == 100 for row in resistors))
 

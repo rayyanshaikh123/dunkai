@@ -155,10 +155,19 @@ class ExternalDeviceTests(unittest.TestCase):
         generator = DynamicPCBIRGenerator()
         with patch.object(generator, "fetch_easyeda_metadata", side_effect=AssertionError("fuzzy identity lookup is forbidden")):
             self.assertEqual(generator.parse_bom_rows([{"reference": "U1", "mfr_part": "THE_SELECTED_PART", "package": "SOIC-8"}])[0]["part_number"], "THE_SELECTED_PART")
+            for missing_package in (None, "", "-", "nan", float("nan")):
+                parsed = generator.parse_bom_rows([{"reference": "U11", "mfr_part": "HS280S010BLCD", "package": missing_package}])
+                self.assertEqual(parsed[0]["package"], "CUSTOM")
+            handoff = {"schema_version": "2.0", "components": [{
+                "ref_id": "U11", "package": parsed[0]["package"],
+            }], "nets": []}
+            self.assertTrue(nodes._validate_handoff({"bom": {"summary": {}}}, handoff)["well_formed"])
         with self.assertRaisesRegex(ValueError, "cannot be omitted"):
             generator.parse_bom_rows([{"reference": "U1", "mfr_part": None}])
         with tempfile.TemporaryDirectory() as directory:
             csv = Path(directory) / "bom.csv"
+            csv.write_text("reference,mfr_part,package\nU11,HS280S010BLCD,\n")
+            self.assertEqual(generator.parse_bom_csv(str(csv))[0]["package"], "CUSTOM")
             csv.write_text("reference,mfr_part,package\nU1,,SOIC-8\n")
             with self.assertRaisesRegex(ValueError, "cannot be omitted"):
                 generator.parse_bom_csv(str(csv))

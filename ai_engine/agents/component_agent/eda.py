@@ -4,6 +4,24 @@ import urllib.request
 import urllib.parse
 from typing import List, Dict, Any
 
+
+def _package_string(value: Any) -> str:
+    """Keep handoff package fields as strings, including missing catalogue data.
+
+    Pandas represents blank CSV cells as NaN, and ``bool(float('nan'))`` is
+    true. A simple ``value or 'CUSTOM'`` therefore leaked the literal "nan"
+    into schema 2.0 and failed handoff validation.
+    """
+    try:
+        if bool(pd.isna(value)):
+            return "CUSTOM"
+    except (TypeError, ValueError):
+        pass
+    package = str(value).strip()
+    if package.casefold() in {"", "-", "nan", "none", "null", "n/a"}:
+        return "CUSTOM"
+    return package
+
 class DynamicPCBIRGenerator:
     """
     Dynamic PCB IR Generator:
@@ -60,7 +78,7 @@ class DynamicPCBIRGenerator:
             if not ref or ref == 'nan' or not mpn or mpn == 'nan':
                 raise ValueError(f"Required BOM row {ref} has no part number; it cannot be omitted from the handoff")
 
-            csv_package = str(row[pkg_col]).strip() if pkg_col and str(row[pkg_col]) != 'nan' else "CUSTOM"
+            csv_package = _package_string(row[pkg_col]) if pkg_col else "CUSTOM"
             
             lcsc = None
             if lcsc_col:
@@ -95,7 +113,7 @@ class DynamicPCBIRGenerator:
             if row.get("external"):
                 raise ValueError(f"{ref} is an external system device; pass its PCB interface, not a fictitious device footprint")
             component = {"ref_id": ref, "part_class": str(row.get("category") or "ic").lower(),
-                         "part_number": part, "package": row.get("package") or "CUSTOM", "quantity": 1}
+                         "part_number": part, "package": _package_string(row.get("package")), "quantity": 1}
             for key in ("lcsc", "board_profile", "required", "device_reference"):
                 if row.get(key) is not None: component[key] = row[key]
             components.append(component)
