@@ -12,7 +12,10 @@ import numpy as np
 import pandas as pd
 from sentence_transformers import SentenceTransformer
 
+import capacity
 import curated_taxonomy
+import roles
+import suitability
 
 from config import (
     DATASET_DF,
@@ -40,6 +43,10 @@ CATEGORY_RESOLUTION_TOP_N = getattr(_config, "CATEGORY_RESOLUTION_TOP_N", 5)
 CATEGORY_RESOLUTION_MIN_SIMILARITY = getattr(
     _config, "CATEGORY_RESOLUTION_MIN_SIMILARITY", 0.35
 )
+#: Candidates returned from a role-scoped search. Wider than TOP_K because the
+#: subset is already the right kind of part; ranking needs room to prefer
+#: stocked, cheaper and interface-verified rows among them.
+ROLE_TOP_K = getattr(_config, "ROLE_TOP_K", 40)
 
 
 class ComponentRetriever:
@@ -58,6 +65,24 @@ class ComponentRetriever:
         # Set by _filter_candidates; surfaced on every retrieve() result so the
         # weaker embedding path is visible downstream rather than assumed good.
         self._last_resolution = None
+
+        # Role-scoped search (roles.py): the rows that can fill each role,
+        # their index vectors, and (for MCUs) their stated capacity.
+        columns = self.dataset.columns
+        subcategories = (self.dataset["subcategory"] if "subcategory" in columns
+                         else pd.Series([""] * len(self.dataset), index=self.dataset.index)).astype(str)
+        self._subcategory_keys = subcategories.map(roles.key).to_numpy()
+        # No stock column: every row counts as unknown stock (0), and
+        # _rows_for_role then falls back to the whole allowlist.
+        self._stock = (pd.to_numeric(self.dataset["stock"], errors="coerce").fillna(0).to_numpy()
+                       if "stock" in columns else np.zeros(len(self.dataset)))
+        self._role_ids: Dict[str, np.ndarray] = {}
+        self._role_vectors: Dict[str, np.ndarray] = {}
+        self._role_capacity: Dict[str, Tuple[np.ndarray, np.ndarray]] = {}
+        for finding in roles.verify(subcategories.value_counts().to_dict()):
+            (logger.error if finding["severity"] == "error" else logger.warning)(
+                "Role table staleness [%s]: %s", finding["kind"], finding["message"]
+            )
 
         (
             self.category_labels,
@@ -199,7 +224,7 @@ class ComponentRetriever:
     # Query Builder
     # ------------------------------------------------------------------
 
-    def _build_query(self, request: Dict[str, Any]) -> str:
+    def _build_query(self, request: Dict[str, Any], role_mode: bool = False) -> str:
 
         parts: List[str] = []
 
@@ -214,10 +239,13 @@ class ComponentRetriever:
         if subsystem:
             parts.append(subsystem)
 
-        if category:
+        # In role mode the search is already confined to the right kind of
+        # part; the architecture's coarse category would only pull the query
+        # off course (Category: Processing dragged "Motor Driver" into MCUs).
+        if category and not role_mode:
             parts.append(f"Category: {category}")
 
-        if component_type:
+        if component_type and not role_mode:
             parts.append(f"Type: {component_type}")
 
         if interfaces:
@@ -226,7 +254,7 @@ class ComponentRetriever:
         if power_interfaces:
             parts.append("Power interfaces: " + ", ".join(power_interfaces))
 
-        taxonomy_hint = self._taxonomy_hint(subsystem, category)
+        taxonomy_hint = None if role_mode else self._taxonomy_hint(subsystem, category)
         if taxonomy_hint:
             parts.append("Likely taxonomy: " + ", ".join(taxonomy_hint))
 
@@ -442,13 +470,122 @@ class ComponentRetriever:
             )
         return candidates
 
+    def _function_override(
+        self,
+        unfiltered: List[Dict[str, Any]],
+        filtered: List[Dict[str, Any]],
+        request: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        """Prefer parts that prove the subsystem's function over the category.
+
+        The architecture's coarse category can be wrong for the role ("Motor
+        Driver" filed under Processing, "GPS Receiver" under Sensor). Filtering
+        to it then leaves only parts that cannot do the job -- MCUs, touch
+        controllers. When nothing in the category proves the function, use the
+        search results that do. The category also steers the query itself
+        (its taxonomy hint pulled "Motor Driver" entirely into MCUs), so if the
+        first search has none either, search again on the subsystem alone.
+        """
+        if not filtered or any(suitability.mismatch(c, request) is None for c in filtered):
+            return filtered
+        proven = [c for c in unfiltered if suitability.mismatch(c, request) is None]
+        subsystem = str(request.get("subsystem") or "").strip()
+        if not proven and subsystem:
+            distances, indices = self._search_index(self._embed_query(subsystem))
+            proven = [c for c in self._get_candidates(indices, distances) if suitability.mismatch(c, request) is None]
+        if not proven:
+            return filtered
+        logger.warning(
+            "No '%s' candidate in category '%s' proves the function; using %d that do from outside it.",
+            request.get("subsystem"), request.get("category"), len(proven),
+        )
+        self._last_resolution = {**(self._last_resolution or {}), "function_override": True}
+        return proven
+
     # ------------------------------------------------------------------
     # Public Retrieval API
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # Role-scoped search
+    # ------------------------------------------------------------------
+
+    def _rows_for_role(self, role: "roles.Role") -> np.ndarray:
+        """Catalogue rows in the role's allowlist, in-stock ones when any are."""
+        if role.key not in self._role_ids:
+            mask = np.isin(self._subcategory_keys, list(role.allowed))
+            stocked = np.flatnonzero(mask & (self._stock > 0))
+            self._role_ids[role.key] = stocked if len(stocked) else np.flatnonzero(mask)
+        return self._role_ids[role.key]
+
+    def _vectors_for_role(self, role: "roles.Role") -> np.ndarray:
+        if role.key not in self._role_vectors:
+            ids = self._rows_for_role(role)
+            self._role_vectors[role.key] = (
+                self.index.reconstruct_batch(ids.astype(np.int64)) if len(ids) else np.zeros((0, self.index.d), np.float32)
+            )
+        return self._role_vectors[role.key]
+
+    def _capacity_for_role(self, role: "roles.Role") -> Tuple[np.ndarray, np.ndarray]:
+        """(gpio, flash_kb) per role row; NaN where the catalogue is silent."""
+        if role.key not in self._role_capacity:
+            gpio, flash = [], []
+            for row in self.dataset.iloc[self._rows_for_role(role)][["description", "extra_params"]].to_dict("records"):
+                try:
+                    row["extra_params"] = json.loads(row["extra_params"]) if isinstance(row["extra_params"], str) else {}
+                except Exception:
+                    row["extra_params"] = {}
+                g, f = capacity.gpio_count(row), capacity.flash_kb(row)
+                gpio.append(np.nan if g is None else g)
+                flash.append(np.nan if f is None else f)
+            self._role_capacity[role.key] = (np.array(gpio, float), np.array(flash, float))
+        return self._role_capacity[role.key]
+
+    def _retrieve_by_role(self, request: Dict[str, Any], role: "roles.Role") -> Dict[str, Any]:
+        query = self._build_query(request, role_mode=True)
+        ids = self._rows_for_role(role)
+        keep = np.ones(len(ids), dtype=bool)
+        demand = request.get("capacity_demand")
+        if demand and len(ids):
+            # Drop MCUs whose STATED capacity is too small before searching, so
+            # the top-K is not filled with tiny parts that ranking would reject.
+            gpio, flash = self._capacity_for_role(role)
+            keep &= ~((gpio < demand["gpio"]) | (flash < demand["flash_kb"]))
+        candidates: List[Dict[str, Any]] = []
+        if not len(ids):
+            request["match_issue"] = (f"The component catalogue has no {role.name} parts "
+                                      f"({', '.join(role.subcategories[:4])}). Specify the part to use.")
+        elif not keep.any():
+            request["match_issue"] = (f"No catalogue {role.name} is large enough for this design: it needs about "
+                                      f"{demand['gpio']} GPIO and {demand['flash_kb']} KB flash ({demand['basis'][0]}).")
+        else:
+            scores = self._vectors_for_role(role)[keep] @ self._embed_query(query).reshape(-1)
+            k = min(ROLE_TOP_K, len(scores))
+            top = np.argpartition(-scores, k - 1)[:k]
+            top = top[np.argsort(-scores[top])]
+            candidates = self._get_candidates(ids[keep][top], scores[top])
+        self._last_resolution = {
+            "source": "role", "role": role.key, "labels": list(role.subcategories), "confidence": "high",
+            "capacity_filtered": int((~keep).sum()),
+        }
+        logger.info("Role search for %s (%s): %d candidates from %d rows.",
+                    request.get("subsystem"), role.key, len(candidates), int(keep.sum()))
+        return {"request": request, "query": query, "candidate_count": len(candidates),
+                "candidates": candidates, "category_resolution": self._last_resolution}
+
     def retrieve(self, request: Dict[str, Any]) -> Dict[str, Any]:
 
         logger.info("Retrieving component for %s", request.get("subsystem"))
+
+        role = roles.BY_KEY.get(request.get("role") or "")
+        if role is not None and role.source == "external":
+            # A module the catalogue does not sell; external_devices fills it
+            # when a profile exists. Never substitute a catalogue lookalike.
+            request["match_issue"] = roles.missing_profile_reason(role)
+            return {"request": request, "query": "", "candidate_count": 0, "candidates": [],
+                    "category_resolution": {"source": "role", "role": role.key, "confidence": "high"}}
+        if role is not None:
+            return self._retrieve_by_role(request, role)
 
         query = self._build_query(request)
 
@@ -458,7 +595,11 @@ class ComponentRetriever:
 
         candidates = self._get_candidates(indices, distances)
 
-        candidates = self._filter_candidates(candidates, request)
+        candidates = self._function_override(candidates, self._filter_candidates(candidates, request), request)
+        # No role: the old category path. Marked low confidence so the BOM
+        # says the part's function was not verified.
+        self._last_resolution = {**(self._last_resolution or {}), "role": None, "confidence": "low",
+                                 "reason": "role_not_recognised"}
 
         return {
             "request": request,

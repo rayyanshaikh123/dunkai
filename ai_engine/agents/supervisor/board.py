@@ -140,8 +140,12 @@ def stream_board(state: CircuitState, job_id: str) -> Generator[dict[str, Any], 
     for row in bom.get("rows", []):
         if row.get("external") or row.get("board_profile"): continue
         if row.get("description"):
-            reason = mismatch(row, {"subsystem": row.get("subsystem", "")})
-            if reason: problems.append(f"{row.get('reference')}: {row.get('subsystem')} ({row.get('mfr_part')})")
+            # Rows from role-based selection carry their role and the part's
+            # catalogue subcategory; older rows are judged from the label.
+            candidate = {**row, "subcategory": row.get("candidate_subcategory")}
+            request = {"subsystem": row.get("subsystem", ""), **({"role": row["role"]} if "role" in row else {})}
+            reason = mismatch(candidate, request)
+            if reason: problems.append(f"{row.get('reference')}: {row.get('subsystem')} ({reason})")
     if problems:
         yield {"kind": "error", "error": "The BOM contains parts that do not establish the required functions: " + "; ".join(problems[:6]) + ". Regenerate the design with suitable components or external-device interfaces."}
         return

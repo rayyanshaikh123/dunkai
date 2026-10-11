@@ -10,9 +10,12 @@ Responsibility:
 """
 
 import json
+from collections import Counter
 from typing import Dict, List, Any
 
+import capacity
 import interface_taxonomy
+import roles
 
 
 class ArchitectureParser:
@@ -38,6 +41,17 @@ class ArchitectureParser:
 
         adjacency = self._build_adjacency(edges)
 
+        # First pass: what every block must BE. A request needs its neighbours'
+        # roles too (the MCU's capacity demand depends on what hangs off it).
+        self._roles = {
+            node["id"]: roles.infer_role(
+                (node.get("data") or {}).get("label"),
+                (node.get("data") or {}).get("category"),
+                adjacency.get(node["id"], []),
+            )
+            for node in nodes
+        }
+
         requests = []
 
         reference_counter = 1
@@ -62,6 +76,9 @@ class ArchitectureParser:
             reference_counter += 1
 
         return requests
+
+    def _role_of(self, node_id) -> "roles.RoleMatch":
+        return getattr(self, "_roles", {}).get(node_id) or roles.RoleMatch(None)
 
     # ==========================================================
     # Build Node Lookup
@@ -173,7 +190,10 @@ class ArchitectureParser:
                     ),
 
                 "interface":
-                    interface
+                    interface,
+
+                "role":
+                    self._role_of(neighbour["node"]).key
 
             })
 
@@ -184,11 +204,30 @@ class ArchitectureParser:
             )
         )
 
+        match = self._role_of(node_id)
+        role = match.role
+
         return {
 
             "reference": reference,
 
             "node_id": node_id,
+
+            # The part type this block must be filled by (roles.py), or None
+            # when the label does not name one -- that is flagged, not guessed.
+            "role": match.key,
+
+            "role_via": match.via,
+
+            "role_notes": list(match.notes),
+
+            "secondary_roles": list(match.secondary),
+
+            "interface_counts": dict(Counter(
+                c["interface"] for c in connections if str(c["interface"]).lower() != "power"
+            )),
+
+            **({"capacity_demand": capacity.demand(connections)} if role and role.key in ("mcu", "mcu_wireless") else {}),
 
             "type": node_type,
 

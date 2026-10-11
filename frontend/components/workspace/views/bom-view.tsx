@@ -68,6 +68,7 @@ interface BomRow {
   moq?: string | number;
   status?: string;
   status_reason?: string;
+  selection_notes?: string;
   subsystem?: string;
   external?: boolean;
   assembly?: string;
@@ -409,6 +410,7 @@ export function BOMView({ projectId }: BOMViewProps) {
                         {item.subsystem ? <span className="text-muted-foreground block text-[10px]">{item.subsystem}{item.external ? ' · External device' : ''}</span> : null}
                         {item.manufacturer ? <span className="text-muted-foreground block text-[10px]">{item.manufacturer}</span> : null}
                         {item.status && item.status !== 'OK' && item.status !== 'DOCUMENTED_DEFAULT' ? <span className="text-amber-500 block text-[10px]">{item.status_reason ?? item.status}</span> : null}
+                        {item.selection_notes ? <span className="text-muted-foreground block text-[10px]">{item.selection_notes}</span> : null}
                       </TableCell>
                       <TableCell className="h-10 text-xs text-muted-foreground text-right">
                         {quantityOf(item)}

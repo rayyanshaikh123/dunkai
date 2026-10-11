@@ -173,4 +173,25 @@ class ExternalDeviceTests(unittest.TestCase):
                 generator.parse_bom_csv(str(csv))
 
 
+    def test_soil_moisture_probe_is_a_documented_module_with_a_header_not_a_humidity_chip(self):
+        architecture = copy.deepcopy(ARCHITECTURE)
+        graph = architecture["architecture_graph"]
+        graph["nodes"].append({"id": "soil", "data": {"label": "Soil Moisture Sensor", "category": "Sensor"}})
+        graph["edges"].append({"source": "soil", "target": "mcu", "data": {"interface": "I2C"}})
+        requirements = {"hardware_inputs": ["Soil Moisture Sensor"], "power_requirements": "['Battery', 'USB-C']"}
+        output, retriever = component_output(requirements, architecture)
+        self.assertNotIn("errors", output)
+        self.assertNotIn("Soil Moisture Sensor", [r["subsystem"] for r in retriever.requests])
+        rows = output["bom"]["rows"]
+        soil = next(r for r in rows if r.get("device_profile") == "soil_moisture")
+        self.assertEqual((soil["mfr_part"], soil["status"]), ("SEN0193", "DOCUMENTED_DEFAULT"))
+        header = next(r for r in rows if r["reference"] in soil["pcb_references"])
+        self.assertEqual(header["board_profile"], "student-sensor-3p")
+        self.assertEqual(coverage_issues(output["architecture"], rows), [])
+        # Its I2C edge was replaced by the analog output the kit actually has.
+        edges = output["architecture"]["architecture_graph"]["edges"]
+        self.assertTrue(any(e["data"]["interface"] == "Analog" and "soil" in (e["source"], e["target"]) for e in edges))
+        self.assertFalse(any(e["data"]["interface"] == "I2C" and "soil" in (e["source"], e["target"]) for e in edges))
+
+
 if __name__ == "__main__": unittest.main()

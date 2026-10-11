@@ -32,10 +32,12 @@ import logging
 import math
 from typing import Any, Dict, List, Optional
 
+import capacity
 import catalogue
 import config
 import coverage
 import utils
+import roles
 import suitability
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
@@ -395,11 +397,32 @@ class ComponentRanker:
         """
         request = retrieval_result.get("request", {})
         offered = retrieval_result.get("candidates", [])
-        rejected = [{"mfr_part": utils.get_mfr_part(c), "reason": suitability.mismatch(c, request)} for c in offered]
-        rejected = [r for r in rejected if r["reason"]]
-        candidates = [c for c in offered if suitability.mismatch(c, request) is None]
+        role = request.get("role")
+        demand = request.get("capacity_demand")
+        rejected, candidates = [], []
+        for c in offered:
+            reason = suitability.mismatch(c, request)
+            flags: List[str] = []
+            if reason is None and role:
+                result, why = roles.verdict(c, role)
+                if result == roles.UNKNOWN:
+                    flags.append(why)
+            if reason is None and demand:
+                result, why, notes = capacity.check(c, demand)
+                if result == capacity.FAIL:
+                    reason = why
+                elif result == capacity.UNKNOWN:
+                    flags.append(why)
+                c = {**c, "capacity_notes": notes}
+            if reason:
+                rejected.append({"mfr_part": utils.get_mfr_part(c), "subcategory": c.get("subcategory"), "reason": reason})
+            else:
+                candidates.append({**c, "selection_flags": flags})
         if offered and not candidates:
-            request["match_issue"] = f"No catalogue candidate proves the required function for {request.get('subsystem', 'this subsystem')}. Specify a suitable component or an explicit external-device interface."
+            examples = "; ".join(r["reason"] for r in rejected[:3])
+            request["match_issue"] = (f"No catalogue candidate proves the required function for {request.get('subsystem', 'this subsystem')}"
+                                      + (f" (rejected: {examples})" if examples else "")
+                                      + ". Specify a suitable component or an explicit external-device interface.")
         build_qty = _get_build_quantity(request)
 
         unit_prices = [utils.get_unit_price(c, build_qty) for c in candidates]
@@ -409,7 +432,9 @@ class ComponentRanker:
             for candidate, price in zip(candidates, unit_prices)
         ]
 
-        scored.sort(key=lambda c: c["score"], reverse=True)
+        # Parts whose function or capacity the catalogue could not confirm go
+        # below every verified part, whatever their stock or price score.
+        scored.sort(key=lambda c: (bool(c.get("selection_flags")), -c["score"]))
 
         logger.info(
             "Ranked %d candidates for %s (%s)",

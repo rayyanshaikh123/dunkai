@@ -39,6 +39,15 @@ PROFILES = {
         "includes": ["K=1 EC probe", "analog signal conversion board", "integrated PT1000 temperature probe", "PT1000 signal conversion board", "sensor cable"],
         "assembly": "Use the signal conditioner, not the bare probe. Custom PCB harness: pin 1 GND, pin 2 3.3V, pin 3 A (analog EC output, 0–3V). The conditioner accepts 3.3–5V, so this output is within a 3.3V ADC's range. Clean and calibrate the probe with a 1413µS/cm standard before measurements. The kit's PT1000 temperature lead needs its separate conversion board; use a water-rated temperature input for compensation, and do not substitute an ambient-only sensor.",
     },
+    "soil_moisture": {
+        "label": "Soil Moisture Sensor", "category": "Sensor", "manufacturer": "DFRobot",
+        "mfr_part": "SEN0193", "description": "Gravity analog capacitive corrosion-resistant soil moisture sensor",
+        "source_url": "https://wiki.dfrobot.com/Capacitive_Soil_Moisture_Sensor_SKU_SEN0193",
+        "supply_v": [3.3, 5.5], "signal_v": [0, 3.0], "interface": "Analog",
+        "rail_v": 3.3, "pcb_connector": "student-sensor-3p",
+        "includes": ["capacitive soil probe", "Gravity PH2.0-3P sensor cable"],
+        "assembly": "Custom PCB harness: pin 1 GND, pin 2 3.3V, pin 3 A (analog output, 0–3.0V per the DFRobot specification, within a 3.3V ADC's range). Map the Gravity cable to the header by label, not by colour or position. Calibrate dry (in air) and wet (in water) readings for your board before use; insert only up to the probe's marked line and keep the electronics above the soil.",
+    },
     "battery": {
         "label": "Battery", "category": "Power", "manufacturer": "Adafruit",
         "mfr_part": "353", "description": "Protected 1S lithium-ion battery pack, 3.7V 6600mAh (three cells in parallel)",
@@ -94,6 +103,7 @@ PRICE_SNAPSHOTS = {
     "tds": {"unit_price_usd": 11.80, "price_source_url": "https://www.dfrobot.com/product-1662.html", "price_source_name": "DFRobot", "price_basis": "Manufacturer list price, quantity 1"},
     "ph": {"unit_price_usd": 39.50, "price_source_url": "https://www.dfrobot.com/product-1782.html", "price_source_name": "DFRobot", "price_basis": "Manufacturer list price, quantity 1"},
     "conductivity": {"unit_price_usd": 199.00, "price_source_url": "https://www.dfrobot.com/product-2565.html", "price_source_name": "DFRobot", "price_basis": "Manufacturer list price, quantity 1"},
+    "soil_moisture": {"unit_price_usd": 5.90, "price_source_url": "https://www.dfrobot.com/product-1385.html", "price_source_name": "DFRobot", "price_basis": "Manufacturer list price, quantity 1"},
     "battery": {"unit_price_usd": 24.50, "price_source_url": "https://www.adafruit.com/product/353", "price_source_name": "Adafruit", "price_basis": "Manufacturer list price, quantity 1"},
     "solar": {"unit_price_usd": 9.00, "price_source_url": "https://www.dfrobot.com/product-1774.html", "price_source_name": "DFRobot", "price_basis": "Manufacturer list price, quantity 1"},
     "solar_manager": {"unit_price_usd": 7.90, "price_source_url": "https://www.dfrobot.com/product-1712.html", "price_source_name": "DFRobot", "price_basis": "Manufacturer list price, quantity 1"},
@@ -128,9 +138,13 @@ PATTERNS = {
     "tds": r"\b(tds|total dissolved solids)\b",
     "ph": r"\b(ph|acidity)\b",
     "conductivity": r"\b(conductivity|electrical conductivity|ec sensor|ec probe|ec meter)\b",
+    "soil_moisture": r"\b(soil|moisture sensor)\b",
     "battery": r"\b(battery|batteries|lipo|li.polymer|li.ion)\b",
     "solar": r"\b(solar|photovoltaic)\b",
 }
+#: Conditioned analog sensor kits: a single analog output to the controller,
+#: read from the structured hardware inputs rather than power requirements.
+ANALOG_SENSOR_KEYS = ("tds", "ph", "conductivity", "soil_moisture")
 INTERFACE_ONLY = re.compile(r"\b(interface|connector|conditioning|controller|charger|charging|protection|management|adc|regulator|driver)\b", re.I)
 
 
@@ -161,7 +175,7 @@ def required_keys(requirements, architecture=None, user_brief=""):
         if (key := device_key((node.get("data") or {}).get("label")))
     }
     found = [key for key, pattern in PATTERNS.items()
-             if re.search(pattern, inputs if key in ("tds", "ph", "conductivity") else power, re.I)
+             if re.search(pattern, inputs if key in ANALOG_SENSOR_KEYS else power, re.I)
              or key in graph_keys
              or re.search(pattern, user_text, re.I)]
     # The documented student solar charger is a battery charger and has no
@@ -288,7 +302,7 @@ def prepare_architecture(architecture, requirements, user_brief=""):
         edges.append({"id": f"{source['id']}-{interface}-{target['id']}", "source": source["id"],
                       "target": target["id"], "type": "smoothstep", "label": interface, "data": {"interface": interface}})
 
-    for key in ("tds", "ph", "conductivity"):
+    for key in ANALOG_SENSOR_KEYS:
         sensor = devices.get(key)
         if sensor is None or not sensor["data"].get("device_profile"): continue
         # These selected kits have conditioned analog output, not I2C. Remove
@@ -318,7 +332,7 @@ def prepare_architecture(architecture, requirements, user_brief=""):
                              and (node.get("data") or {}).get("device_profile") not in ("battery", "solar")), None)
         if power_source is not None:
             added_sensor_supply = False
-            for key in ("tds", "ph", "conductivity"):
+            for key in ANALOG_SENSOR_KEYS:
                 sensor = devices.get(key)
                 if sensor is None or not sensor["data"].get("device_profile"):
                     continue
@@ -331,7 +345,7 @@ def prepare_architecture(architecture, requirements, user_brief=""):
                     link(power_source, sensor, "Power")
                     added_sensor_supply = True
             if added_sensor_supply:
-                note = ("Conditioned TDS/pH/conductivity modules use the controller's existing power rail. "
+                note = ("Conditioned analog sensor modules use the controller's existing power rail. "
                         "Verify that rail is within each module's documented supply range before fabrication.")
                 if note not in assumptions: assumptions.append(note)
 
@@ -346,7 +360,7 @@ def prepare_architecture(architecture, requirements, user_brief=""):
         link(devices["battery"], manager, "Power")
         if "solar" in devices: link(devices["solar"], manager, "Power")
         link(manager, regulator, "Power")
-        for key in ("tds", "ph", "conductivity"):
+        for key in ANALOG_SENSOR_KEYS:
             if key in devices: link(regulator, devices[key], "Power")
         link(regulator, processor, "Power")
         note = "Assume 3.3V logic and a regulated 5V external power assembly. Verify every selected peripheral's voltage/current and pump power budget before fabrication."
@@ -356,7 +370,7 @@ def prepare_architecture(architecture, requirements, user_brief=""):
     model = result.get("architecture_model")
     if isinstance(model, dict):
         for key, node in devices.items():
-            bucket = "sensing_modules" if key in ("tds", "ph", "conductivity") else "power_subsystem"
+            bucket = "sensing_modules" if key in ANALOG_SENSOR_KEYS else "power_subsystem"
             labels = model.setdefault(bucket, [])
             if node["data"]["label"] not in labels: labels.append(node["data"]["label"])
     edges.sort(key=lambda e: (str(e.get("source")), str(e.get("target")), str((e.get("data") or {}).get("interface"))))

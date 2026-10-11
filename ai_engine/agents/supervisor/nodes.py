@@ -401,6 +401,14 @@ def component_node(state: CircuitState) -> dict[str, Any]:
         "bom_csv_path": str(csv_path),
         **_append_message(
             f"BOM generated with {summary.get('total_line_items', len(rows))} line item(s)."
+            + "".join(
+                f" {len(refs)} {what}: {', '.join(refs)}."
+                for what, refs in (
+                    ("need a part specified", summary.get("unfilled_references") or []),
+                    ("need review", summary.get("flagged_references") or []),
+                )
+                if refs
+            )
         ),
     }
 

@@ -33,6 +33,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 
 import config
+import roles
 import utils
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
@@ -70,6 +71,9 @@ BOM_COLUMNS = [
     "score",
     "status",
     "status_reason",
+    "role",
+    "candidate_subcategory",
+    "selection_notes",
     "shared_with",
     "description",
     "datasheet_url",
@@ -150,6 +154,9 @@ class BOMGenerator:
                 "score": None,
                 "status": status,
                 "status_reason": request.get("match_issue") or STATUS_REASONS.get(status, ""),
+                "role": request.get("role"),
+                "candidate_subcategory": None,
+                "selection_notes": "",
                 "shared_with": "",
                 "description": None,
                 "datasheet_url": None,
@@ -177,10 +184,16 @@ class BOMGenerator:
         if status == "OK" and stock < build_quantity:
             status = "INSUFFICIENT_STOCK"
 
+        role = roles.BY_KEY.get(request.get("role") or "")
+        concerns = self._concerns(request, candidate, role)
+        if status == "OK" and concerns:
+            status = "LOW_CONFIDENCE"
+
         similarity = candidate.get("similarity_score")
         threshold = getattr(config, "SIMILARITY_THRESHOLD", None)
         if (
             status == "OK"
+            and role is None
             and threshold is not None
             and similarity is not None
             and float(similarity) < float(threshold)
@@ -213,12 +226,31 @@ class BOMGenerator:
             "moq": moq,
             "score": candidate.get("score"),
             "status": status,
-            "status_reason": STATUS_REASONS.get(status, ""),
+            "status_reason": " ".join(concerns) if status == "LOW_CONFIDENCE" and concerns else STATUS_REASONS.get(status, ""),
+            "role": request.get("role"),
+            "candidate_subcategory": candidate.get("subcategory"),
+            "selection_notes": " ".join(filter(None, [role.note if role else None, *candidate.get("capacity_notes", [])])),
             "shared_with": "",
             "description": candidate.get("description"),
             "datasheet_url": utils.get_datasheet_url(candidate),
             "source_url": utils.get_source_url(candidate),
         }
+
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _concerns(request: Dict[str, Any], candidate: Dict[str, Any], role) -> List[str]:
+        """Specific reasons this pick needs a human look, in plain words."""
+        concerns: List[str] = []
+        if role is None:
+            concerns.append(
+                f"'{request.get('subsystem', 'This block')}' does not name a recognised part type, so the part's function "
+                "was matched by text similarity only. Rename the block (e.g. 'Temperature Sensor') or verify the part."
+            )
+        concerns += list(request.get("role_notes") or [])
+        concerns += list(candidate.get("selection_flags") or [])
+        if candidate.get("duplicate_warning"):
+            concerns.append("Every suitable candidate is already used by another block.")
+        return concerns
 
     # ------------------------------------------------------------------
     def generate(
@@ -255,7 +287,16 @@ class BOMGenerator:
         for result in ranked_results:
             request = result.get("request", {})
             reference = request.get("reference", "?")
-            candidates = result.get("ranked_candidates", [])
+            candidates = list(result.get("ranked_candidates", []))
+            # Start from the ranker's choice: it has already walked past parts
+            # JLCPCB does not stock and parts another block claimed.
+            best = result.get("best_candidate")
+            if best is not None:
+                at = next((i for i, c in enumerate(candidates) if self._part_key(c) == self._part_key(best)), None)
+                if at:
+                    candidates.insert(0, candidates.pop(at))
+                if at is not None:
+                    candidates[0] = best
             order.append(reference)
             request_by_ref[reference] = request
 
