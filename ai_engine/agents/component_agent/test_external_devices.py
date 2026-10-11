@@ -42,6 +42,24 @@ def component_output(requirements=None, architecture=None):
 
 
 class ExternalDeviceTests(unittest.TestCase):
+    def test_battery_usb_c_defaults_reach_a_handoff_without_inventing_solar(self):
+        requirements = {**REQUIREMENTS, "power_requirements": "['Battery', 'USB-C']"}
+        output, retriever = component_output(requirements)
+        self.assertNotIn("errors", output)
+        rows = output["bom"]["rows"]
+        devices = {r["device_profile"]: r for r in rows if r.get("device_profile")}
+        self.assertEqual(devices["battery"]["mfr_part"], "353")
+        self.assertEqual(devices["usb_manager"]["mfr_part"], "6106")
+        self.assertEqual(devices["battery"]["via_reference"], devices["usb_manager"]["reference"])
+        self.assertNotIn("solar", devices)
+        self.assertNotIn("solar_manager", devices)
+        self.assertEqual(coverage_issues(output["architecture"], rows), [])
+        self.assertEqual(prepare_architecture(output["architecture"], requirements), output["architecture"])
+        pcb = nodes.pcb_node(output)
+        self.assertNotIn("errors", pcb)
+        self.assertTrue(nodes._validate_handoff(output, pcb["pcb_ir"])["well_formed"])
+        self.assertEqual({n["name"] for n in pcb["pcb_ir"]["nets"] if n["net_class"] == "power"}, {"LOGIC_3V3", "REGULATED_5V_IN"})
+
     def test_omitted_model_subsystems_are_restored_and_defaults_are_idempotent(self):
         architecture = prepare_architecture(ARCHITECTURE, REQUIREMENTS)
         self.assertEqual(prepare_architecture(architecture, REQUIREMENTS), architecture)

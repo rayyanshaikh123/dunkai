@@ -152,7 +152,8 @@ export async function generateStructured(design, brief, resolution, provider, wo
     const refs = external?.pcb_references ?? []
     for (const ref of refs) {
       const component = design.components.find((c) => c.ref_id === ref)
-      const expectedPins = component?.board_profile === "student-sensor-3p" ? ["pin1", "pin2", "pin3"]
+      const expectedPins = ["student-sensor-3p", "student-digital-3p"].includes(component?.board_profile) ? ["pin1", "pin2", "pin3"]
+        : component?.board_profile === "student-i2c-4p" ? ["pin1", "pin2", "pin3", "pin4"]
         : component?.board_profile === "student-power-2p" ? ["pin1", "pin2"] : []
       const open = mapping.members.filter((m) => m.ref_id === ref && !m.pins.length)
       const lonely = Object.values(mapping.assignments[ref] ?? {}).filter((net) =>

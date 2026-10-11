@@ -114,7 +114,7 @@ class HardwareRequirements(BaseModel):
     safety_compliance: list[str] | str | dict[str, Any] | None = None
     budget: str | int | float | None = None
 
-    @field_validator("project_name", "category", "objective", "power_requirements", "budget", mode="before")
+    @field_validator("project_name", "category", "objective", "budget", mode="before")
     @classmethod
     def normalize_scalar(cls, value):
         if value is None:

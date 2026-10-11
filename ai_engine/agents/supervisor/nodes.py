@@ -101,6 +101,28 @@ def _requirements_from_state(state: CircuitState) -> dict[str, Any] | None:
     return None
 
 
+def _user_design_brief(state: CircuitState) -> str:
+    """Keep user-stated hardware available when an LLM omits it from the schema."""
+    messages = list(state.get("interview_history") or [])
+    messages.append({"role": "user", "content": state.get("user_input") or ""})
+    seen = set()
+    contents = []
+    for message in messages:
+        if isinstance(message, dict):
+            role = message.get("role") or message.get("type")
+            content = message.get("content")
+        else:
+            role = getattr(message, "type", None)
+            content = getattr(message, "content", None)
+        if role not in ("user", "human") or not isinstance(content, str):
+            continue
+        content = content.strip()
+        if content and content not in seen:
+            seen.add(content)
+            contents.append(content)
+    return "\n".join(contents)
+
+
 def _architecture_from_state(state: CircuitState) -> dict[str, Any] | None:
     architecture = state.get("architecture")
     if isinstance(architecture, dict) and architecture:
@@ -322,7 +344,11 @@ def component_node(state: CircuitState) -> dict[str, Any]:
 
     try:
         from external_devices import prepare_architecture, profile_row, add_interfaces
-        architecture = prepare_architecture(architecture, _requirements_from_state(state) or {})
+        architecture = prepare_architecture(
+            architecture,
+            _requirements_from_state(state) or {},
+            user_brief=_user_design_brief(state),
+        )
         mods = _component_agent_modules()
         parser = mods["parser"]
         retriever = mods["retriever"]
@@ -679,6 +705,8 @@ def pcb_node(state: CircuitState) -> dict[str, Any]:
     references = [reference_map[n["id"]] for n in copper_graph["architecture_graph"]["nodes"] if n["id"] in reference_map]
     nets, wireless_links = _build_nets_from_architecture(copper_graph, references, node_references=reference_map)
     nets = separate_power_nets(nets, rows)
+    from student_water import complete_nets
+    nets = complete_nets(nets, rows, architecture)
 
     try:
         generator = _eda_generator()

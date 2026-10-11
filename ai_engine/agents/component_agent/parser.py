@@ -44,6 +44,12 @@ class ArchitectureParser:
 
         for node in nodes:
 
+            # A complete module can implement several architecture functions.
+            # Its integrated BLE radio is documented on the MCU BOM row;
+            # buying a second copy of that module would duplicate the hardware.
+            if (node.get("data") or {}).get("integrated_in"):
+                continue
+
             request = self._build_request(
                 node=node,
                 adjacency=adjacency,

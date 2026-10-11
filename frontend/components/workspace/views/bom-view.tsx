@@ -318,10 +318,15 @@ export function BOMView({ projectId }: BOMViewProps) {
           )}
 
           {componentCount === 0 && job.status === 'idle' && (
-            <p className="rounded-lg border border-border bg-secondary/40 p-3 text-xs text-muted-foreground">
-              The pipeline has not produced a PCB handoff for this BOM yet, so the board cannot be generated.
-              Re-run the pipeline from the Chat tab.
-            </p>
+            <div className="flex flex-col gap-3 rounded-lg border border-border bg-secondary/40 p-3 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+              <p>
+                This BOM has no PCB handoff yet. Open Chat and rerun the full design pipeline to refresh the BOM and create the handoff.
+              </p>
+              <Button variant="outline" size="sm" className="shrink-0" onClick={() => setActiveTab('chat')}>
+                Open Chat
+                <ArrowRight className="ml-2 h-4 w-4" />
+              </Button>
+            </div>
           )}
 
           {/* Summary Stats */}

@@ -224,8 +224,12 @@ export async function intake(input) {
     if (!external?.mfr_part || !external.device_profile || external.status === "SELECTION_REQUIRED" || !external.pcb_references?.length) {
       throw new Error(`Required device ${device.label} is missing its system BOM part or PCB connection path`)
     }
-    if (external.via_reference && !design.external_components.some((c) => c.reference === external.via_reference && c.device_profile === "solar_manager")) {
-      throw new Error(`Required device ${device.label} is missing its external charger`)
+    const viaProfiles = { battery: ["solar_manager", "usb_manager"], solar: ["solar_manager", "usb_manager"],
+      water_pump: ["water_pump_driver"], water_buzzer: ["water_buzzer_driver"] }
+    if (external.via_reference && !design.external_components.some((c) => c.reference === external.via_reference &&
+      (viaProfiles[external.device_profile] ?? []).includes(c.device_profile) &&
+      JSON.stringify(c.pcb_references) === JSON.stringify(external.pcb_references))) {
+      throw new Error(`Required device ${device.label} is missing its external charger or driver`)
     }
     for (const ref of external.pcb_references) {
       if (!seen.has(ref)) throw new Error(`Required device ${device.label} references a missing PCB port ${ref}`)

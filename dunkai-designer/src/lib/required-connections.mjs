@@ -47,16 +47,22 @@ export function validateRequiredConnections(design, circuit) {
     for (const ref of external?.pcb_references ?? []) {
       const component = design.components.find((c) => c.ref_id === ref)
       const findNet = (role) => design.nets.find((n) => n.members.some((m) => m.ref_id === ref && m.role === role))
-      if (component?.board_profile === "student-sensor-3p") {
+      if (["student-sensor-3p", "student-digital-3p"].includes(component?.board_profile)) {
         checkPin(device.label, ref, 1, findNet("GROUND"))
         checkPin(device.label, ref, 2, findNet("SUPPLY"))
-        const signal = checkPin(device.label, ref, 3, findNet("ANALOG_IN"))
+        const signalNet = design.nets.find((n) => n.net_class === "signal" && n.members.some((m) => m.ref_id === ref))
+        const signal = checkPin(device.label, ref, 3, signalNet)
         const other = signalOwners.get(signal)
         if (other && other !== device.node_id) fail(device.label, "independent analog sensor outputs have been shorted together")
         signalOwners.set(signal, device.node_id)
       } else if (component?.board_profile === "student-power-2p") {
         checkPin(device.label, ref, 1, findNet("SUPPLY"))
         checkPin(device.label, ref, 2, findNet("GROUND"))
+      } else if (component?.board_profile === "student-i2c-4p") {
+        checkPin(device.label, ref, 1, findNet("GROUND"))
+        checkPin(device.label, ref, 2, findNet("SUPPLY"))
+        checkPin(device.label, ref, 3, findNet("CLOCK"))
+        checkPin(device.label, ref, 4, findNet("DATA"))
       } else if (!components.has(ref)) fail(device.label, `PCB interface ${ref} is missing`)
     }
   }

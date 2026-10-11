@@ -36,7 +36,7 @@ PROFILES = {
         "source_url": "https://www.adafruit.com/product/353",
         "nominal_v": 3.7, "full_charge_v": 4.2, "max_charge_a": 1.0,
         "includes": ["physical battery pack", "pack protection circuit"],
-        "assembly": "Connect battery + and - to the solar manager BAT IN + and -. Check polarity from terminal markings; JST cable polarity can differ between brands. This is a 1S pack, not three cells in series.",
+        "assembly": "Connect the protected 1S pack to the selected charger's battery input. Check polarity from terminal markings; JST cable polarity can differ between brands. This is a 1S pack, not three cells in series.",
     },
     "solar": {
         "label": "Solar Panel", "category": "Power", "manufacturer": "DFRobot",
@@ -54,6 +54,14 @@ PROFILES = {
         "includes": ["CC/CV lithium charger", "battery protection", "5V regulator"],
         "assembly": "Battery connects to BAT IN. FIT0601 regulated USB output connects to USB IN. Connect the enabled regulated 5V OUT and GND to the PCB power header. Follow the module start-up/enable instructions. The battery and panel remain required purchases.",
     },
+    "usb_manager": {
+        "label": "USB-C Battery Charger and 5V Boost Module", "category": "Power", "manufacturer": "Adafruit",
+        "mfr_part": "6106", "description": "bq25185 USB-C 1S lithium charger with power-path management and TPS61023 5V boost",
+        "source_url": "https://learn.adafruit.com/adafruit-bq25185-usb-dc-solar-charger-with-5v-boost-board/pinouts",
+        "regulated_output_v": 5.0, "max_output_a": 1.0, "max_charge_a": 1.0,
+        "includes": ["physical USB-C socket", "1S CC/CV lithium charger", "power-path controller", "5V boost converter"],
+        "assembly": "Connect the protected Adafruit 353 pack to BATT with verified JST polarity. Supply 5V at USB-C; this is power input, not MCU USB data. Default charging is 1A and termination is 4.2V. Wire the regulated output terminal '+' to PCB 5V and '-' to GND. Keep pump/LED loads off during startup (the boost can stall above 200mA at startup); delay enabling loads and keep the total under 1A. Charging has a six-hour safety timeout. The battery remains a separate required purchase.",
+    },
     "logic_regulator": {
         "label": "3.3V Logic Regulator", "category": "Power", "manufacturer": "Texas Instruments",
         "mfr_part": "TLV75533PDBVR", "description": "5V-input to 3.3V-output logic LDO, SOT-23-5",
@@ -63,6 +71,11 @@ PROFILES = {
         "assembly": "IN and EN on regulated 5V, OUT on 3.3V, GND on ground, NC open. Fit input/output capacitors of at least 1uF at the regulator. Review dissipation and load current; motor/pump power must be budgeted separately.",
     },
 }
+
+POWER_MANAGERS = ("solar_manager", "usb_manager")
+
+import student_water
+PROFILES.update(student_water.PROFILES)
 
 PATTERNS = {
     "tds": r"\b(tds|total dissolved solids)\b",
@@ -86,45 +99,115 @@ def device_key(label):
     return next((key for key, pattern in PATTERNS.items() if re.search(pattern, text, re.I)), None)
 
 
-def required_keys(requirements):
-    # Only explicit input/power requirements: an objective mentioning a battery
-    # monitor must not itself turn into a requirement for a rechargeable pack.
+def required_keys(requirements, architecture=None, user_brief=""):
+    # Pull protected hardware from both the structured brief and the generated
+    # architecture. The architecture is the only place some interviews record
+    # a solar panel or battery, so reading requirements alone can drop a device
+    # that is visibly present in the design graph.
     inputs = device_text(json.dumps(requirements.get("hardware_inputs") or [], ensure_ascii=False))
     power = device_text(json.dumps(requirements.get("power_requirements") or [], ensure_ascii=False))
-    return [key for key, pattern in PATTERNS.items()
-            if re.search(pattern, inputs if key in ("tds", "ph") else power, re.I)]
+    user_text = device_text(user_brief)
+    graph = (architecture or {}).get("architecture_graph") or {}
+    graph_keys = {
+        key for node in graph.get("nodes", []) if isinstance(node, dict)
+        if (key := device_key((node.get("data") or {}).get("label")))
+    }
+    found = [key for key, pattern in PATTERNS.items()
+             if re.search(pattern, inputs if key in ("tds", "ph") else power, re.I)
+             or key in graph_keys
+             or re.search(pattern, user_text, re.I)]
+    # The documented student solar charger is a battery charger and has no
+    # battery-less operating mode. Keep its battery as a separate required BOM
+    # item when a solar-powered system is requested.
+    if "solar" in found and "battery" not in found:
+        found.append("battery")
+    return found
 
 
-def prepare_architecture(architecture, requirements):
+def _requires_custom_power_profile(requirements):
+    """Return true only for power specs incompatible with the documented kit.
+
+    A 3.7V single-cell battery, 4.2V charge limit, 5V regulated panel output,
+    or the selected panel's 7.2V open-circuit rating is compatible. Treating
+    every voltage or cell-count mention as custom left ordinary projects at
+    SELECTION_REQUIRED.
+    """
+    value = requirements.get("power_requirements") or ""
+    text = device_text(json.dumps(value, ensure_ascii=False)).lower()
+    if re.search(r"\b(lead[\s-]?acid|lifepo4|lithium[\s-]?iron[\s-]?phosphate|nimh|nicd|nicad|alkaline)\b", text):
+        return True
+    if re.search(r"\b(?:[2-9]\s*s|[2-9]\s*series|series\s+(?:of\s+)?[2-9])\b", text):
+        return True
+
+    battery_terms = [m.start() for m in re.finditer(r"\b(battery|batteries|cell|pack)\b", text)]
+    solar_terms = [m.start() for m in re.finditer(r"\b(solar|panel|photovoltaic)\b", text)]
+    for match in re.finditer(r"\b(\d+(?:\.\d+)?)\s*v(?:olts?)?\b", text):
+        voltage = float(match.group(1))
+        position = match.start()
+        nearest_battery = min((abs(position - p) for p in battery_terms), default=float("inf"))
+        nearest_solar = min((abs(position - p) for p in solar_terms), default=float("inf"))
+        if nearest_battery < nearest_solar:
+            if voltage not in {3.6, 3.7, 4.2}:
+                return True
+        elif nearest_solar < nearest_battery:
+            if voltage not in {5.0, 7.2}:
+                return True
+        elif voltage not in {3.3, 3.6, 3.7, 4.2, 5.0, 5.5}:
+            return True
+    return False
+
+
+def prepare_architecture(architecture, requirements, user_brief=""):
     """Preserve explicit devices even when inference returned only an interface.
 
     Repeated calls are idempotent. All existing nodes survive. Defaults are
     recorded as assumptions and can be replaced through external_device_choices.
     The external charging assembly is a system graph, not copper on this PCB.
     """
-    result = copy.deepcopy(architecture)
+    custom_power = _requires_custom_power_profile(requirements)
+    initial_required = required_keys(requirements, architecture, user_brief)
+    result = student_water.prepare(
+        architecture,
+        requirements,
+        PROFILES,
+        allow_power_defaults="battery" in initial_required and not custom_power,
+        user_brief=user_brief,
+    )
     graph = result.setdefault("architecture_graph", {})
     nodes = graph.setdefault("nodes", [])
     edges = graph.setdefault("edges", [])
-    required = required_keys(requirements)
+    required = required_keys(requirements, result, user_brief)
     if not required:
         return result
     choices = requirements.get("external_device_choices") or {}
     if not isinstance(choices, dict): choices = {}
     # Default power kit is suitable for a small 3.3V student controller, not an
     # arbitrary specified 12V/lead-acid/series battery project.
-    power_text = json.dumps(requirements.get("power_requirements") or "")
-    custom_power = bool(re.search(r"\b(\d+(?:\.\d+)?\s*v(?:olt)?s?|\d+\s*s\b|lead.acid|lifepo4|nimh|mah|mppt)\b", power_text, re.I))
-    default_power = "battery" in required and "solar" in required and not custom_power
+    # A battery does not require a solar panel. Battery + USB-C uses a real
+    # USB-C charger/boost assembly, while solar projects keep their solar kit.
+    default_power = "battery" in required and not custom_power
+    manager_key = "solar_manager" if "solar" in required else "usb_manager"
     assumptions = result.setdefault("assumptions", [])
     existing_ids = {node["id"] for node in nodes}
+    requirement_text = json.dumps(requirements, ensure_ascii=False).casefold()
 
     def ensure(key):
         found = next((n for n in nodes if (n.get("data") or {}).get("external_key") == key
                       or device_key((n.get("data") or {}).get("label")) == key), None)
         if found is None and key == "logic_regulator":
             found = next((n for n in nodes if (n.get("data") or {}).get("category") == "Power"
-                          and re.fullmatch(r"power management(?: ic)?|pmic|voltage regulator|3\.3v(?: logic)? regulator", str((n.get("data") or {}).get("label", "")), re.I)), None)
+                          and re.fullmatch(r"power management(?: ic)?|pmic|voltage regulator|3\.3v(?: logic)? regulator", device_text((n.get("data") or {}).get("label", "")), re.I)), None)
+            if found is None:
+                # If the architecture agent supplied only a catalogue chip
+                # guess such as TP4586, reuse that power node for the
+                # documented regulator. The generated chip label is not a
+                # user part selection; preserve recognizable battery/panel
+                # nodes and leave explicitly chosen parts to the requirements.
+                found = next((n for n in nodes if (n.get("data") or {}).get("category") == "Power"
+                              and device_key((n.get("data") or {}).get("label")) not in ("battery", "solar")
+                              and not INTERFACE_ONLY.search(device_text((n.get("data") or {}).get("label", "")))
+                              and not (n.get("data") or {}).get("external_key")
+                              and str((n.get("data") or {}).get("label", "")).casefold() not in requirement_text), None)
         if found is None:
             identifier = f"required-{key}"
             while identifier in existing_ids: identifier += "-device"
@@ -136,6 +219,7 @@ def prepare_architecture(architecture, requirements):
         data = found["data"]
         data["external_key"] = key
         data["external"] = key != "logic_regulator"
+        data["label"] = PROFILES[key]["label"]
         selected = choices.get(key)
         supported = selected is None or selected == PROFILES[key]["mfr_part"]
         if key in ("battery", "solar") and not default_power and selected is None:
@@ -166,22 +250,22 @@ def prepare_architecture(architecture, requirements):
         link(sensor, processor, "Analog")
 
     if default_power:
-        manager = ensure("solar_manager")
+        manager = ensure(manager_key)
         regulator = ensure("logic_regulator")
-        devices.update(solar_manager=manager, logic_regulator=regulator)
-        external_power_ids = {devices[key]["id"] for key in ("battery", "solar", "solar_manager")}
+        devices.update({manager_key: manager, "logic_regulator": regulator})
+        external_power_ids = {devices[key]["id"] for key in ("battery", "solar", manager_key) if key in devices}
         # Battery/panel go through the selected external charger. They cannot
         # be connected in parallel to a common controller supply.
         edges[:] = [e for e in edges if not external_power_ids.intersection((e.get("source"), e.get("target")))]
         link(devices["battery"], manager, "Power")
-        link(devices["solar"], manager, "Power")
+        if "solar" in devices: link(devices["solar"], manager, "Power")
         link(manager, regulator, "Power")
         for key in ("tds", "ph"):
             if key in devices: link(regulator, devices[key], "Power")
         link(regulator, processor, "Power")
         note = "Assume 3.3V logic and a regulated 5V external power assembly. Verify every selected peripheral's voltage/current and pump power budget before fabrication."
         if note not in assumptions: assumptions.append(note)
-    result["required_devices"] = [{"key": key, "node_id": devices[key]["id"], "label": PROFILES[key]["label"]} for key in required]
+    result["required_devices"] = [{"key": key, "node_id": devices[key]["id"], "label": PROFILES[key]["label"]} for key in required] + result.get("student_required_devices", [])
     # Keep the existing summary useful when preservation restored a missing node.
     model = result.get("architecture_model")
     if isinstance(model, dict):
@@ -202,7 +286,7 @@ def profile_row(request, quantity=1):
         "subsystem": request["subsystem"], "category": request["category"],
         "build_quantity": quantity, "unit_price_usd": None, "extended_price_usd": None,
         "stock": None, "moq": None, "lcsc": None, "score": None, "shared_with": "",
-        "external": key != "logic_regulator", "required": True, "external_key": key,
+        "external": (profile or {}).get("external", key != "logic_regulator"), "required": True, "external_key": key,
     }
     if profile is None:
         row.update(mfr_part=request.get("requested_part"), package="External device", status="SELECTION_REQUIRED",
@@ -235,17 +319,38 @@ def add_interfaces(rows):
     used = {r["reference"] for r in rows}
     counter = 1
     for device in list(rows):
-        if device.get("device_profile") not in ("tds", "ph", "solar_manager"): continue
+        key = device.get("device_profile")
+        connector = PROFILES.get(key, {}).get("pcb_connector")
+        if not connector and key not in ("tds", "ph", *POWER_MANAGERS): continue
         while f"J{counter}" in used: counter += 1
         reference = f"J{counter}"
         used.add(reference)
         device["pcb_references"] = [reference]
-        rows.append(connector_row(device, reference, "student-sensor-3p" if device["device_profile"] in ("tds", "ph") else "student-power-2p"))
-    manager = next((r for r in rows if r.get("device_profile") == "solar_manager"), None)
+        profile = connector or ("student-sensor-3p" if key in ("tds", "ph") else "student-power-2p")
+        row = connector_row(device, reference, profile)
+        if profile == "student-i2c-4p": row.update(mfr_part="1x4 2.54mm through-hole header", package="HDR-4-P2.54")
+        if profile == "student-digital-3p": row.update(mfr_part="1x3 2.54mm through-hole header", package="HDR-3-P2.54")
+        rows.append(row)
+        if PROFILES.get(key, {}).get("divider"):
+            for leg in ("top", "bottom"):
+                number = 1
+                while f"R{number}" in used: number += 1
+                rref = f"R{number}"; used.add(rref)
+                rows.append({"reference": rref, "mfr_part": "10k 1% 0603 resistor", "package": "0603", "board_profile": "student-divider-10k",
+                             "subsystem": f"{device['subsystem']} voltage divider ({leg})", "category": "Expansion", "build_quantity": device.get("build_quantity", 1),
+                             "divider_for": key, "divider_leg": leg, "unit_price_usd": None, "extended_price_usd": None, "stock": None,
+                             "required": True, "external": False, "status": "DOCUMENTED_DEFAULT", "status_reason": "1:1 voltage divider; quote the physical resistors with the PCB parts."})
+    manager = next((r for r in rows if r.get("device_profile") in POWER_MANAGERS), None)
     for device in rows:
         if device.get("device_profile") in ("battery", "solar") and manager:
             device["via_reference"] = manager["reference"]
             device["pcb_references"] = manager["pcb_references"]
+        via = PROFILES.get(device.get("device_profile"), {}).get("via_profile")
+        if via:
+            driver = next((r for r in rows if r.get("device_profile") == via), None)
+            if driver:
+                device["via_reference"] = driver["reference"]
+                device["pcb_references"] = driver["pcb_references"]
     return rows
 
 
@@ -262,8 +367,10 @@ def coverage_issues(architecture, rows):
             issues.append(f"{required['label']}: required PCB interface or power path missing")
         elif any(not any(r["reference"] == ref and not r.get("external") for r in rows) for ref in row["pcb_references"]):
             issues.append(f"{required['label']}: PCB connector is missing from the board BOM")
-        elif row.get("via_reference") and not any(r["reference"] == row["via_reference"] and r.get("device_profile") == "solar_manager" for r in rows):
-            issues.append(f"{required['label']}: charger in the required power path is missing")
+        elif row.get("via_reference"):
+            allowed = POWER_MANAGERS if row.get("device_profile") in ("battery", "solar") else (PROFILES.get(row.get("device_profile"), {}).get("via_profile"),)
+            if not any(r["reference"] == row["via_reference"] and r.get("device_profile") in allowed and r.get("pcb_references") == row.get("pcb_references") for r in rows):
+                issues.append(f"{required['label']}: charger/driver in the required connection path is missing")
     return issues
 
 
@@ -275,8 +382,11 @@ def board_graph(architecture, rows):
     nodes = []
     excluded = set()
     for node in graph["nodes"]:
+        if (node.get("data") or {}).get("integrated_in"):
+            excluded.add(node["id"])
+            continue
         device = device_by_node.get(node["id"])
-        if device and device.get("device_profile") not in ("tds", "ph"):
+        if device and device.get("device_profile") not in ("tds", "ph") and not PROFILES.get(device.get("device_profile"), {}).get("pcb_connector"):
             excluded.add(node["id"])
             continue
         nodes.append(node)
@@ -288,7 +398,7 @@ def board_graph(architecture, rows):
         if node["id"] not in refs and index < len(rows) and not rows[index].get("external"):
             refs[node["id"]] = rows[index]["reference"]
     for node_id, row in device_by_node.items():
-        if row.get("device_profile") in ("tds", "ph"):
+        if row.get("device_profile") in ("tds", "ph") or PROFILES.get(row.get("device_profile"), {}).get("pcb_connector"):
             refs[node_id] = row["pcb_references"][0]
     return result, refs
 
@@ -296,7 +406,7 @@ def board_graph(architecture, rows):
 def separate_power_nets(nets, rows):
     """Explicit LDO pins prevent all Power edges shorting IN and OUT together."""
     regulator = next((r for r in rows if r.get("device_profile") == "logic_regulator"), None)
-    manager = next((r for r in rows if r.get("device_profile") == "solar_manager"), None)
+    manager = next((r for r in rows if r.get("device_profile") in POWER_MANAGERS), None)
     if not regulator or not manager: return nets
     input_ref = manager["pcb_references"][0]
     reg_ref = regulator["reference"]

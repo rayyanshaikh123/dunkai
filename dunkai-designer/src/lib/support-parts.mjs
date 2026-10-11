@@ -111,9 +111,22 @@ export function supportParts(design, resolutions, mapping) {
     // The bus is pulled to the supply of a part on it; the controller's first.
     const controller =
       refs.find((ref) => resolutions.find((x) => x.component?.ref_id === ref)?.component.part_class === "processing") ?? refs[0]
-    const rail = railsOf(controller).supply[0]?.[1] ?? refs.map((x) => railsOf(x).supply[0]?.[1]).find(Boolean)
+    const rail = Number.isFinite(net.voltage_v)
+      ? design.nets.find((n) => supplyNets.has(n.name) && n.voltage_v === net.voltage_v)?.name
+      : railsOf(controller).supply[0]?.[1] ?? refs.map((x) => railsOf(x).supply[0]?.[1]).find(Boolean)
+    if (Number.isFinite(net.voltage_v) && !rail) throw new Error(`No ${net.voltage_v}V rail for I2C pull-up on ${net.name}`)
     if (!rail) continue
     add(PASSIVES.i2cPullUp, { pin1: net.name, pin2: rail }, controller, `I2C pull-up on ${net.name}`)
+  }
+
+  for (const net of design.nets.filter((n) => n.interface === "OneWire")) {
+    const refs = connectedRefs(net.name)
+    if (refs.length < 2) continue
+    const rail = Number.isFinite(net.voltage_v)
+      ? design.nets.find((n) => supplyNets.has(n.name) && n.voltage_v === net.voltage_v)?.name
+      : railsOf(refs[0]).supply[0]?.[1]
+    if (!rail) throw new Error(`No verified supply for OneWire pull-up on ${net.name}`)
+    add(PASSIVES.i2cPullUp, { pin1: net.name, pin2: rail }, refs[0], `OneWire DATA pull-up on ${net.name}`)
   }
 
   // --- active-low reset pins: 10 k to the part's own supply ---------------------
