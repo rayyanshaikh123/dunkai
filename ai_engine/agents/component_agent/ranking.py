@@ -407,6 +407,17 @@ class ComponentRanker:
                 result, why = roles.verdict(c, role)
                 if result == roles.UNKNOWN:
                     flags.append(why)
+                if role == "adc":
+                    capability, detail = roles.adc_capability(c, request)
+                    if capability == roles.FAIL:
+                        reason = detail
+                    elif capability == roles.UNKNOWN:
+                        flags.append(detail)
+                if role == "display":
+                    buses = {str(i).lower() for i in request.get("interfaces", [])} & {"i2c", "spi"}
+                    text = roles.candidate_text(c)
+                    if buses and not any(bus in text for bus in buses):
+                        flags.append(f"Catalogue data does not confirm the display supports {', '.join(sorted(buses)).upper()}.")
             if reason is None and demand:
                 result, why, notes = capacity.check(c, demand)
                 if result == capacity.FAIL:

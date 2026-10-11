@@ -154,5 +154,53 @@ class RoleSelectionTests(unittest.TestCase):
         self.assertEqual(result["candidates"], [])
         self.assertIn("no orderable part", request["match_issue"])
 
+    def test_unspecified_circuits_do_not_get_catalogue_lookalikes(self):
+        import retrieval
+        retriever = retrieval.ComponentRetriever.__new__(retrieval.ComponentRetriever)
+        for label, role in (("Power Management IC", "unspecified_power"),
+                            ("Analog Sensor Connector", "unspecified_connector"),
+                            ("Signal Conditioning", "unspecified_conditioning")):
+            with self.subTest(label=label):
+                request = {"reference": "U1", "subsystem": label, "role": role}
+                result = retriever.retrieve(request)
+                self.assertEqual(result["candidates"], [])
+                row = self.bom(result)[0]
+                self.assertEqual(row["status"], "NO_MATCH")
+                self.assertTrue(row["status_reason"])
+
+    def test_pcf8563_requires_crystal_before_board_handoff(self):
+        rtc = self.typed("PCF8563", "Real-time Clocks (RTC)", "I2C Real Time Clocks")
+        row = self.bom({"request": {"reference": "U1", "subsystem": "Clock (RTC)", "role": "rtc"},
+                        "candidates": [rtc]})[0]
+        self.assertEqual(row["status"], "SELECTION_REQUIRED")
+        self.assertIn("32.768 kHz", row["status_reason"])
+
+    def test_display_requires_bus_evidence_and_rejects_one_digit_part(self):
+        segment = self.typed("YD2310AR-7.3", "LED Segment Displays", "No Description")
+        oled = self.typed("OLED-X", "OLED displays modules", "128x64 OLED display")
+        row = self.bom({"request": {"reference": "U1", "subsystem": "Display", "role": "display", "interfaces": ["I2C"]},
+                        "candidates": [segment, oled]})[0]
+        self.assertEqual(row["mfr_part"], "OLED-X")
+        self.assertEqual(row["status"], "LOW_CONFIDENCE")
+        self.assertIn("I2C", row["status_reason"])
+
+    def test_adc_needs_channels_for_all_external_analogue_sensors(self):
+        import parser
+        nodes = [{"id": "adc", "data": {"label": "Signal Conditioning/ADC", "category": "Processing"}},
+                 {"id": "mcu", "data": {"label": "MCU", "category": "Processing"}}]
+        nodes += [{"id": key, "data": {"label": f"{key} Sensor", "category": "Sensor", "device_profile": key}}
+                  for key in ("ph", "tds", "conductivity")]
+        arch = {"architecture_graph": {"nodes": nodes, "edges": [
+            {"source": "adc", "target": "mcu", "data": {"interface": "I2C"}}]}}
+        request = next(r for r in parser.ArchitectureParser().parse(arch) if r["role"] == "adc")
+        self.assertEqual(request["adc_channels"], 3)
+        one = self.typed("AD9649BCPZ-20", "Analog To Digital Converters (ADCs)",
+                         "14 bit 20MHz ADC SPI", **{"number of channels": "1", "Interface": "Parallel"})
+        four = self.typed("MCP3424-E/SL", "Analog To Digital Converters (ADCs)",
+                          "18 bit I2C Sigma-Delta ADC", **{"number of channels": "4", "Interface": "I2C"})
+        row = self.bom({"request": request, "candidates": [one, four]})[0]
+        self.assertEqual(row["mfr_part"], "MCP3424-E/SL")
+        self.assertEqual(row["status"], "OK")
+
 
 if __name__ == "__main__": unittest.main()

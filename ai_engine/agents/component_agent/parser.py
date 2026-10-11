@@ -51,6 +51,13 @@ class ArchitectureParser:
             )
             for node in nodes
         }
+        # External analogue sensor modules consume one ADC channel each. The
+        # graph may route them through a generic connector, so counting only
+        # the ADC node's direct neighbours would miss the actual demand.
+        self._analog_sensor_count = sum(
+            (node.get("data") or {}).get("device_profile") in ("ph", "tds", "conductivity", "soil_moisture")
+            for node in nodes
+        )
 
         requests = []
 
@@ -222,6 +229,7 @@ class ArchitectureParser:
             "role_notes": list(match.notes),
 
             "secondary_roles": list(match.secondary),
+            **({"adc_channels": self._analog_sensor_count} if match.key == "adc" and self._analog_sensor_count else {}),
 
             "interface_counts": dict(Counter(
                 c["interface"] for c in connections if str(c["interface"]).lower() != "power"

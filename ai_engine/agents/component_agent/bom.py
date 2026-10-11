@@ -388,6 +388,17 @@ class BOMGenerator:
 
         self._flag_shared_parts(rows)
 
+        # PCF8563 uses an external 32.768 kHz quartz resonator. A correct RTC
+        # chip alone is not a complete clock circuit, so stop PCB handoff until
+        # the oscillator is represented in the architecture and BOM.
+        has_crystal = any(r.get("role") == "crystal" and r.get("mfr_part") for r in rows)
+        if not has_crystal:
+            for row in rows:
+                if str(row.get("mfr_part") or "").upper().startswith("PCF8563"):
+                    row["status"] = "SELECTION_REQUIRED"
+                    row["status_reason"] = ("PCF8563 needs a 32.768 kHz quartz crystal. Add the crystal, "
+                                            "its load-capacitance choice and oscillator-pin wiring before PCB handoff.")
+
         return rows
 
     # ------------------------------------------------------------------

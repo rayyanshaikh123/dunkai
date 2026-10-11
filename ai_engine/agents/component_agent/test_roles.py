@@ -35,7 +35,7 @@ GOLDEN = [
     ("Camera Sensor", "Sensor", [], "camera"),
     ("Camera Flash LED", "Output", [], "led"),
     ("Status LED", "Output", [], "led"),
-    ("LED Matrix Display", "Output", [], "display"),
+    ("LED Matrix Display", "Output", [], "matrix_display"),
     ("User Interface Display", "Output", [], "display"),
     ("OLED Display", "Output", [], "display"),
     ("Touch Screen Display", "Output", [], "display"),
@@ -61,6 +61,12 @@ GOLDEN = [
     ("USB to UART Bridge", "Communication", [], "usb_uart_bridge"),
     ("USB-C Connector", "Power", [], "usb_connector"),
     ("USB-C Battery Charger and 5V Boost Module", "Power", [], "battery_charger"),
+    ("USB-C Power Delivery", "Power", [], "usb_pd_sink"),
+    ("Power Management IC", "Power", [], "unspecified_power"),
+    ("Analog Sensor Connector", "Input", [], "unspecified_connector"),
+    ("Signal Conditioning/ADC", "Processing", [], "adc"),
+    ("Signal Conditioning", "Processing", [], "unspecified_conditioning"),
+    ("7-segment Display", "Output", [], "segment_display"),
     ("Charge Controller", "Power", [], "battery_charger"),
     ("3.3V Logic Regulator", "Power", [], "ldo"),
     ("Buck Converter", "Power", [], "buck"),
@@ -89,6 +95,10 @@ WRONG = [
     ("display", candidate("MS9122", "Video Interface ICs", "i2c、spi、i2s qfn-48-ep(7x7) video interface ics")),
     ("usb_uart_bridge", candidate("FSUSB42MUX", "USB ICs", "2:1 analog switches, multiplexers")),
     ("battery_charger", candidate("DW01A", "Battery Management ICs", "protection ic support sot-23-6l")),
+    ("adc", candidate("ADUC7023BCP6Z62IRL", "Microcontroller Units (MCUs/MPUs/SOCs)", "12bit built-in flash microcontroller")),
+    ("adc", candidate("TXS0108EQPWRQ1", "Analog To Digital Converters (ADCs)", "Bidirectional Translators, Level Shifters")),
+    ("usb_pd_sink", candidate("TYPE-C 6PLCH10.0 073", "USB Connectors", "Type-C receptacle")),
+    ("display", candidate("YD2310AR-7.3", "LED Segment Displays", "No Description")),
 ]
 
 GOOD = [
@@ -102,6 +112,8 @@ GOOD = [
                       **{"CPU Core": "ARM Cortex-M3", "Program Storage Size": "64KB", "GPIO Ports Number": "37"})),
     ("rtc", candidate("DS3231SN", "Real-Time Clocks(RTC)", "i2c real time clock")),
     ("battery_charger", candidate("TP4056", "Battery Management ICs", "charging ic lithium battery")),
+    ("adc", candidate("ADS1115IDGSR", "Analog to Digital Converters (ADCs)", "16bit i2c analog to digital converter")),
+    ("usb_pd_sink", candidate("HUSB237-AA001-DN06R", "USB PD", "Power Receiver Controller 5V 9V 12V")),
 ]
 
 

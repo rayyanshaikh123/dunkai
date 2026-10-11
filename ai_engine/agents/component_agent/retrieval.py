@@ -578,10 +578,11 @@ class ComponentRetriever:
         logger.info("Retrieving component for %s", request.get("subsystem"))
 
         role = roles.BY_KEY.get(request.get("role") or "")
-        if role is not None and role.source == "external":
-            # A module the catalogue does not sell; external_devices fills it
-            # when a profile exists. Never substitute a catalogue lookalike.
-            request["match_issue"] = roles.missing_profile_reason(role)
+        if role is not None and role.source != "catalogue":
+            # External modules and underspecified circuits cannot be replaced
+            # by a nearby chip from the catalogue.
+            request["match_issue"] = (roles.missing_profile_reason(role) if role.source == "external"
+                                      else roles.selection_reason(role))
             return {"request": request, "query": "", "candidate_count": 0, "candidates": [],
                     "category_resolution": {"source": "role", "role": role.key, "confidence": "high"}}
         if role is not None:

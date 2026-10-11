@@ -172,14 +172,21 @@ Infer all required electronic subsystems.
 The output should represent ONLY purchasable electronic building blocks.
 Distinguish external devices from the electronics on the PCB. A battery cell,
 solar panel, chemical probe or physical sensor is not interchangeable with its
-protection IC, controller, ADC or interface. Specify an external-device
-connector and the appropriate signal-conditioning/interface electronics when
-the physical device is external. Do not assign I2C or SPI to every sensor by
-default: analog probes need analog conditioning/ADC and external connections.
+protection IC, controller, ADC or interface. For pH, TDS, conductivity and soil
+moisture modules, the component stage adds their documented PCB connectors;
+do not invent a second generic "Analog Sensor Connector" block. Add a
+separate ADC or conditioner only when the requirements or architecture require
+that function; name it "ADC", amplifier, filter, etc. rather than a vague
+"Signal Conditioning" block. Do not assign I2C or SPI to every sensor by
+default: analog probes need analog signal paths and external connections.
 Retain the actual physical device as its own subsystem when it is explicitly
 required: a TDS probe, pH probe, battery or solar panel must never disappear
 merely because you added a connector, charger or conditioner. The full system
 BOM includes off-board devices as well as PCB-mounted electronics.
+Name power blocks by their actual function (regulator, battery charger,
+protection circuit, buck, boost). Do not treat a USB-C socket as a USB Power
+Delivery controller; add a PD receiver only when voltage negotiation is needed.
+Do not invent output voltages or load currents absent from the requirements.
 --------------------------------------------------
 # IMPORTANT RULES
 Only include electronic subsystems.

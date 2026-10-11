@@ -70,7 +70,7 @@ _MCU_SUBCATS = (
 _WIRELESS_MODULES = ("wifi modules", "bluetooth modules")
 _DISPLAYS = (
     "lcd displays modules", "oled displays modules", "oled display", "lcd screen", "liquid crystal display screen",
-    "organic light emitting diode display screen", "led segment display", "led segment displays", "led displays - dot matrix",
+    "organic light emitting diode display screen",
 )
 
 # Ordered: the first role whose pattern matches the label wins. Specific roles
@@ -100,6 +100,12 @@ ROLES: Tuple[Role, ...] = (
          (r"\b(charger|charging|charge (controller|management|ic))\b",),
          ("battery management ics", "battery management", "pmic - battery management"),
          evidence=r"(charg|充电)", reject=r"\b(protection ic|monitoring ic|fuel gauge|balanc\w*)\b"),
+    Role("usb_pd_sink", "USB Power Delivery Receiver",
+         (r"\busb(?:.?c)?\b.*\b(power delivery|pd (?:sink|receiver|controller))\b",),
+         ("usb pd",), evidence=r"\b(power receiver controller|power receiver|pd sink|sink controller)\b",
+         reject=r"\b(power supply controller|source controller|usb connector|receptacle|socket)\b"),
+    Role("unspecified_power", "Power Management Circuit",
+         (r"\b(power management(?: ic)?|pmic)\b",), source="selection"),
     Role("usb_hub", "USB Hub", (r"\busb hub\b",), ("usb hub controllers",)),
     Role("usb_uart_bridge", "USB-to-UART Bridge",
          (r"\busb\b.*\b(uart|serial|ttl|bridge|converter|programmer)\b", r"\b(uart|serial)\b.*\busb\b", r"\b(ch340|cp210\d|ft232)"),
@@ -136,6 +142,21 @@ ROLES: Tuple[Role, ...] = (
     Role("mcu_wireless", "Wireless Microcontroller", (), _MCU_SUBCATS + _WIRELESS_MODULES,
          evidence=r"\b(cpu core|program storage size|flash|cortex|risc.?v|xtensa|esp32|esp8266|nrf5|wi.?fi|bluetooth|ble)\b",
          reject=r"\b(motor drivers?|brushed dc|fan (control|speed)|mosfets?|power monitor|supervisors?)\b"),
+    Role("adc", "Analog-to-Digital Converter",
+         (r"\b(adc|analog.to.digital(?: converter)?|signal conditioning/adc)\b",),
+         ("analog to digital converters (adcs)", "analog to digital converters (adc)",
+          "adc/dac - specialized", "adcs/dacs - special purpose"),
+         evidence=r"\b(adc|analog.to.digital|a/d converter|delta.sigma|successive approximation)\b",
+         reject=r"\b(microcontrollers?|mcu|processor|translators?|level shifters?)\b"),
+    Role("unspecified_connector", "Analog Sensor Connector",
+         (r"\banalog sensor (?:connector|interface|header)\b",), source="selection"),
+    Role("unspecified_conditioning", "Signal Conditioning Circuit",
+         (r"\bsignal conditioning\b",), source="selection"),
+    Role("segment_display", "Segment Display",
+         (r"\b(7.?segment|seven.?segment|segment display)\b",),
+         ("led segment display", "led segment displays")),
+    Role("matrix_display", "LED Matrix Display",
+         (r"\b(led matrix|dot matrix)\b",), ("led displays - dot matrix",)),
     Role("wifi", "Wi-Fi Module", (r"\b(wi.?fi|wlan|802\.11)\b",), _WIRELESS_MODULES, evidence=r"\b(wi.?fi|wlan|802\.11)"),
     Role("ble", "Bluetooth Module", (r"\b(ble|bluetooth)\b",), _WIRELESS_MODULES, evidence=r"\b(ble|bluetooth)\b"),
     Role("display", "Display",
@@ -284,8 +305,8 @@ def verdict(candidate: Dict[str, Any], role_key: Optional[str]) -> Tuple[str, st
     if role is None:
         return UNKNOWN, "role not recognised"
     part = candidate.get("mfr_part") or "part"
-    if role.source == "external":
-        return FAIL, f"{role.name} is an external module; a catalogue chip ({part}) cannot stand in for it"
+    if role.source != "catalogue":
+        return FAIL, f"{role.name} needs an explicit selection; a catalogue lookalike ({part}) cannot stand in for it"
     text = candidate_text(candidate)
     subcategory = str(candidate.get("subcategory") or "").strip()
     if subcategory and subcategory.lower() not in ("nan", "none", "unknown"):
@@ -297,7 +318,15 @@ def verdict(candidate: Dict[str, Any], role_key: Optional[str]) -> Tuple[str, st
         return UNKNOWN, f"{part}: catalogue subcategory unknown, function not verified as {role.name}"
     if role.reject and re.search(role.reject, text):
         return FAIL, f"{part} matches '{re.search(role.reject, text).group(0)}', which is not a {role.name}"
-    if role.evidence and not re.search(role.evidence, text):
+    # The allowlisted subcategory is an admission hint, not independent proof:
+    # this catalogue has a level shifter misfiled under ADCs. Evidence must
+    # come from the device description/attributes itself.
+    proof = " ".join(str(candidate.get(f) or "") for f in ("description", "title", "mfr_part"))
+    extra = candidate.get("extra_params")
+    attrs = extra.get("attributes") if isinstance(extra, dict) else None
+    if isinstance(attrs, dict):
+        proof += " " + " ".join(f"{k} {v}" for k, v in attrs.items() if v not in (None, "", "-"))
+    if role.evidence and not re.search(role.evidence, proof.lower()):
         return UNKNOWN, f"{part}: catalogue data does not confirm it is a {role.name}"
     return PASS, ""
 
@@ -329,3 +358,41 @@ def verify(index_counts: Dict[str, int]) -> List[dict]:
 def missing_profile_reason(role: Role) -> str:
     return (f"{role.name}: no orderable part exists in the component catalogue and no documented module profile is defined. "
             "Specify the module to use, or add a profile (external_devices.PROFILES with a PATTERNS entry and a PCB header).")
+
+
+def selection_reason(role: Role) -> str:
+    """Explain the missing specification instead of offering a plausible chip."""
+    if role.key == "unspecified_power":
+        return ("Power Management IC does not specify a function. State the input/output voltages, "
+                "load current, and whether this is a regulator, charger, or protection circuit.")
+    if role.key == "unspecified_connector":
+        return ("Analog Sensor Connector needs pin count, pitch, mating connector, and signal/rail pinout. "
+                "If the external sensor profiles already provide headers, remove this duplicate block.")
+    return ("Signal Conditioning needs its actual function (for example ADC, amplifier, or filter), "
+            "channel count, input range, and output interface before choosing a part.")
+
+
+def adc_capability(candidate: Dict[str, Any], request: Dict[str, Any]) -> Tuple[str, str]:
+    """Verify channel count and controller bus for an ADC, when specified."""
+    extra = candidate.get("extra_params")
+    attrs = extra.get("attributes") if isinstance(extra, dict) else None
+    attrs = {str(k).casefold(): str(v) for k, v in attrs.items()} if isinstance(attrs, dict) else {}
+    part = candidate.get("mfr_part") or "ADC"
+    requested_buses = {str(i).casefold() for i in request.get("interfaces", [])} & {"i2c", "spi"}
+    stated_bus = attrs.get("interface", "").casefold()
+    if requested_buses and stated_bus and not any(bus in stated_bus for bus in requested_buses):
+        return FAIL, f"{part} uses {stated_bus}, but the architecture connects the ADC over {', '.join(sorted(requested_buses)).upper()}"
+    required = int(request.get("adc_channels") or 0)
+    if required:
+        stated = attrs.get("number of channels", "")
+        match = re.search(r"(\d+)", stated)
+        if not match:
+            match = re.search(r"\b(\d+)\s*(?:channel|ch)\b", str(candidate.get("description") or ""), re.I)
+        if not match:
+            return UNKNOWN, f"{part}: catalogue does not state ADC channel count; this design needs {required}"
+        count = int(match.group(1))
+        if count < required:
+            return FAIL, f"{part} has {count} ADC channel(s); this design needs {required}"
+    if requested_buses and not stated_bus and not any(bus in str(candidate.get("description") or "").casefold() for bus in requested_buses):
+        return UNKNOWN, f"{part}: catalogue does not confirm the ADC bus is {', '.join(sorted(requested_buses)).upper()}"
+    return PASS, ""
