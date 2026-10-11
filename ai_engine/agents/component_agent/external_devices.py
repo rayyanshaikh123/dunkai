@@ -73,8 +73,14 @@ PATTERNS = {
 INTERFACE_ONLY = re.compile(r"\b(interface|connector|conditioning|controller|charger|charging|protection|management|adc|regulator|driver)\b", re.I)
 
 
+def device_text(value):
+    # Match both "TDS Sensor" and model labels such as "TDSSensor" or
+    # "pHSensor" without splitting the chemical name pH into separate words.
+    return re.sub(r"(?<=[A-Za-z])(?=[A-Z][a-z])", " ", str(value or ""))
+
+
 def device_key(label):
-    text = str(label or "")
+    text = device_text(label)
     if INTERFACE_ONLY.search(text):
         return None
     return next((key for key, pattern in PATTERNS.items() if re.search(pattern, text, re.I)), None)
@@ -83,8 +89,8 @@ def device_key(label):
 def required_keys(requirements):
     # Only explicit input/power requirements: an objective mentioning a battery
     # monitor must not itself turn into a requirement for a rechargeable pack.
-    inputs = json.dumps(requirements.get("hardware_inputs") or [], ensure_ascii=False)
-    power = json.dumps(requirements.get("power_requirements") or [], ensure_ascii=False)
+    inputs = device_text(json.dumps(requirements.get("hardware_inputs") or [], ensure_ascii=False))
+    power = device_text(json.dumps(requirements.get("power_requirements") or [], ensure_ascii=False))
     return [key for key, pattern in PATTERNS.items()
             if re.search(pattern, inputs if key in ("tds", "ph") else power, re.I)]
 

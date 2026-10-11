@@ -162,13 +162,34 @@ Explicit custom parts can be supplied using `requirements.external_device_choice
 (keys `tds`, `ph`, `battery`, `solar`). Unsupported choices or specified custom
 power ratings stay in the BOM as `SELECTION_REQUIRED`, rather than being
 silently replaced by these defaults. A missing device, PCB port, charging path
-or sensor signal blocks completion. The PCB handoff carries `external_components`
+or sensor signal blocks completion. The final compiler output is also checked
+after generation and repairs, including freeform providers: a required header
+must still have its physical ports and expected net connections. Independent
+TDS and pH analog outputs cannot be joined together, and regulator input/output
+rails cannot be shorted together. Both spaced and CamelCase requirement labels
+are preserved. The PCB handoff carries `external_components`
 and `required_devices`; `system-assembly.json` accompanies the board outputs.
 
 Regenerate a previous failed design to replace its old component selections.
 Deploy the frontend changes to show device labels, assembly notes and interface
 paths; deploy the Node change to archive `system-assembly.json` alongside other
 artifacts in Atlas. No new environment variable is needed.
+
+#### Verification — 11 October 2026
+
+Deployed Space source commit: `425ff0f45a27ef6a74d1305da0b080587ec09fdc`.
+The Space restarted successfully and reports `pcb_ready: true` with the
+Landlock/seccomp sandbox and compiler checks passing. An authenticated live
+`generate_pcb` test retained TDS, pH, battery, panel and charger system parts,
+two sensor ports, and separate `LOGIC_3V3` / `REGULATED_5V_IN` rails without
+making model calls.
+
+Checks passed: 65 designer tests, seven external-device pipeline tests, four
+native adapter tests and three Chromium tests, plus frontend TypeScript. The
+actual compiler produced 37 traces and zero DRC errors for the two-channel
+interface/power test fixture. This is a fixture validation, not an electrical
+certification or a complete model-driven water-purifier run; the health field
+`complete_pcb_run_validated` remains false.
 
 The Node backend rejects an unwired PCB when the design requires nets, and
 releases the reservation for a zero-trace board. Deploy the Node changes to

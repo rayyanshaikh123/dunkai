@@ -50,6 +50,12 @@ class ExternalDeviceTests(unittest.TestCase):
         self.assertGreater(len(architecture["assumptions"]), 0)
         self.assertNotIn("required_devices", ARCHITECTURE)  # input not mutated
 
+    def test_camel_case_model_labels_cannot_drop_required_devices(self):
+        requirements = {"hardware_inputs": ["TDSSensor", "pHSensor"], "power_requirements": ["BatteryPack", "SolarPanel"]}
+        output, _ = component_output(requirements)
+        self.assertEqual({d["key"] for d in output["architecture"]["required_devices"]}, {"tds", "ph", "battery", "solar"})
+        self.assertNotIn("errors", nodes.pcb_node(output))
+
     def test_all_four_physical_devices_and_charging_hardware_remain_in_system_bom(self):
         output, retriever = component_output()
         self.assertNotIn("errors", output)

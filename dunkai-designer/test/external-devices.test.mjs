@@ -8,6 +8,7 @@ import { intake } from "../src/stages/a-intake.mjs"
 import { resolveComponents } from "../src/stages/b-resolve.mjs"
 import { generateStructured } from "../src/stages/d-generate.mjs"
 import { mapPins } from "../src/lib/pinmap.mjs"
+import { validateRequiredConnections } from "../src/lib/required-connections.mjs"
 
 const member = (ref_id, role, pin_function) => ({ ref_id, role, ...(pin_function ? { pin_function } : {}) })
 const net = (name, iface, net_class, members) => ({ name, interface: iface, net_class, members })
@@ -15,13 +16,15 @@ const header = (ref_id, profile, count) => ({ ref_id, part_number: `1x${count} 2
 const fixture = () => ({
   schema_version: "2.0", design_name: "required_external_assembly",
   components: [header("J1", "student-sensor-3p", 3), header("J2", "student-sensor-3p", 3), header("J3", "student-power-2p", 2),
+    header("J4", "student-sensor-3p", 3), header("J5", "student-sensor-3p", 3),
     { ref_id: "U1", part_number: "TLV75533PDBVR", package: "SOT-23-5", board_profile: "tlv75533-dbv" }],
   nets: [
-    net("GND", "Power", "ground", ["J1", "J2", "J3", "U1"].map((r) => member(r, "GROUND"))),
-    net("LOGIC_3V3", "Power", "power", [member("J1", "SUPPLY"), member("J2", "SUPPLY"), member("U1", "SUPPLY", "OUT")]),
+    net("GND", "Power", "ground", ["J1", "J2", "J3", "J4", "J5", "U1"].map((r) => member(r, "GROUND"))),
+    net("LOGIC_3V3", "Power", "power", ["J1", "J2", "J4", "J5"].map((r) => member(r, "SUPPLY")).concat(member("U1", "SUPPLY", "OUT"))),
     net("REGULATED_5V_IN", "Power", "power", [member("J3", "SUPPLY"), member("U1", "SUPPLY", "IN"), member("U1", "SUPPLY", "EN")]),
     // A header-to-header harness fixture only, not a fabricated MCU pinout.
-    net("HARNESS_FIXTURE", "Analog", "signal", [member("J1", "ANALOG_IN"), member("J2", "ANALOG_IN")]),
+    net("TDS_HARNESS", "Analog", "signal", [member("J1", "ANALOG_IN"), member("J4", "ANALOG_IN")]),
+    net("PH_HARNESS", "Analog", "signal", [member("J2", "ANALOG_IN"), member("J5", "ANALOG_IN")]),
   ],
   constraints: { layer_count: 2, board_outline: { width_mm: 50, height_mm: 40 } },
   required_devices: [{ key: "tds", node_id: "tds", label: "TDS Sensor" }, { key: "ph", node_id: "ph", label: "pH Sensor" },
@@ -61,7 +64,8 @@ test("documented headers and regulator map pins without LLM calls and keep IN/OU
   const mapping = mapPins(design, resolution.resolutions)
   assert.equal(mapping.questions.length, 0)
   assert.deepEqual(mapping.assignments.U1, { pin2: "GND", pin5: "LOGIC_3V3", pin1: "REGULATED_5V_IN", pin3: "REGULATED_5V_IN" })
-  assert.equal(mapping.assignments.J1.pin3, "HARNESS_FIXTURE")
+  assert.equal(mapping.assignments.J1.pin3, "TDS_HARNESS")
+  assert.equal(mapping.assignments.J2.pin3, "PH_HARNESS")
   const structured = await generateStructured(design, "Test harness", resolution, provider, directory)
   assert.equal(structured.support.filter((p) => p.why.includes("local input/output capacitor")).length, 2)
   assert.match(structured.board, /DunkaiSensorHeader3/)
@@ -70,6 +74,15 @@ test("documented headers and regulator map pins without LLM calls and keep IN/OU
   assert.equal(compiled.circuitJson.filter((c) => c.type === "source_invalid_component_property_error").length, 0)
   assert.ok(compiled.circuitJson.some((c) => c.type === "source_component" && c.name === "J1"))
   assert.ok(compiled.circuitJson.some((c) => c.type === "source_component" && c.name === "U1"))
+  validateRequiredConnections(design, compiled.circuitJson)
+  const withoutPort = compiled.circuitJson.filter((c) => c.type !== "source_component" || c.name !== "J1")
+  assert.throws(() => validateRequiredConnections(design, withoutPort), /PCB component J1 is missing/)
+  const j1 = compiled.circuitJson.find((c) => c.type === "source_component" && c.name === "J1")
+  const signal = compiled.circuitJson.find((c) => c.type === "source_port" && c.source_component_id === j1.source_component_id && c.pin_number === 3)
+  const withoutSignal = compiled.circuitJson.map((c) => c.type === "source_trace" ? { ...c, connected_source_port_ids: c.connected_source_port_ids.filter((id) => id !== signal.source_port_id) } : c)
+  assert.throws(() => validateRequiredConnections(design, withoutSignal), /pin3 is not connected/)
+  const withoutPad = compiled.circuitJson.filter((c) => c.type !== "pcb_port" || c.source_port_id !== signal.source_port_id)
+  assert.throws(() => validateRequiredConnections(design, withoutPad), /pin3 has no physical PCB port/)
 }))
 
 test("a required sensor signal cannot disappear even if supply and ground are connected", () => withDirectory(async (directory) => {
@@ -83,10 +96,10 @@ test("a required sensor signal cannot disappear even if supply and ground are co
 
 test("a profile cannot certify an unrelated part or cross-connect the regulator rails", () => withDirectory(async (directory) => {
   const input = fixture()
-  input.components[3].part_number = "SOME_OTHER_REGULATOR"
+  input.components.find((c) => c.ref_id === "U1").part_number = "SOME_OTHER_REGULATOR"
   const design = await intake(input)
   await assert.rejects(resolveComponents(design, directory, { name: "test" }), /BOM identity\/package does not match/)
-  input.components[3].part_number = "TLV75533PDBVR"
+  input.components.find((c) => c.ref_id === "U1").part_number = "TLV75533PDBVR"
   const valid = await intake(input)
   const resolution = await resolveComponents(valid, directory, { name: "test" })
   valid.nets.push(net("SHORT", "Power", "power", [member("U1", "SUPPLY", "OUT")]))

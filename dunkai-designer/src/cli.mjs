@@ -18,6 +18,7 @@ import { synthesiseBrief } from "./stages/c-brief.mjs"
 import { generateProject, generateStructured } from "./stages/d-generate.mjs"
 import { applyStructuredFixes } from "./lib/structured-fixes.mjs"
 import { buildOutputsIsolated as buildOutputs } from "./lib/isolated-build.mjs"
+import { validateRequiredConnections } from "./lib/required-connections.mjs"
 import { buildGltf } from "./stages/f-gltf.mjs"
 import { getProvider, PROVIDER_NAMES } from "./providers/index.mjs"
 import { result, failure, note, stage } from "./lib/events.mjs"
@@ -234,6 +235,7 @@ async function main() {
     outputs = retried
   }
 
+  validateRequiredConnections(design, outputs.circuitJson)
   if (args.failOnError && outputs.stats.errors > 0) {
     const err = new Error(
       `${outputs.stats.errors} DRC error element(s): ${outputs.stats.errorTypes.join(", ")}`
