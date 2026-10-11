@@ -1,6 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { mkdtemp, rm } from "node:fs/promises"
+import { createRequire } from "node:module"
+import { mkdir, mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { buildOutputs } from "../src/stages/e-outputs.mjs"
@@ -9,6 +10,9 @@ import { resolveComponents } from "../src/stages/b-resolve.mjs"
 import { generateStructured } from "../src/stages/d-generate.mjs"
 import { mapPins } from "../src/lib/pinmap.mjs"
 import { validateRequiredConnections } from "../src/lib/required-connections.mjs"
+import { resolveBoardProfile } from "../src/lib/board-profiles.mjs"
+
+const require = createRequire(import.meta.url)
 
 const member = (ref_id, role, pin_function) => ({ ref_id, role, ...(pin_function ? { pin_function } : {}) })
 const net = (name, iface, net_class, members) => ({ name, interface: iface, net_class, members })
@@ -42,6 +46,15 @@ const withDirectory = async (run) => {
   const directory = await mkdtemp(path.join(tmpdir(), "dunkai-external-test-"))
   try { return await run(directory) } finally { await rm(directory, { recursive: true, force: true }) }
 }
+
+test("canonical divider BOM identity resolves the documented 0603 PCB profile", () => withDirectory(async (directory) => {
+  await mkdir(path.join(directory, "imports"), { recursive: true })
+  const resolved = await resolveBoardProfile({
+    ref_id: "R1", part_number: "10k 1% 0603 resistor", package: "0603", board_profile: "student-divider-10k",
+  }, directory, require)
+  assert.equal(resolved.ok, true)
+  assert.equal(resolved.padCount, 2)
+}))
 
 test("required physical devices survive intake, and cannot be replaced by a connector alone", async () => {
   const input = fixture()

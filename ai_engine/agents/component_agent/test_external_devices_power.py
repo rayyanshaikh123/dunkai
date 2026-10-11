@@ -64,6 +64,15 @@ class ExternalDevicePowerPathTests(unittest.TestCase):
         self.assertEqual(row["price_source_name"], "DFRobot")
         self.assertEqual(row["price_source_url"], "https://www.dfrobot.com/product-133.html")
 
+    def test_flow_sensor_uses_manufacturer_price_snapshot(self):
+        row = profile_row({
+            "reference": "U1", "node_id": "flow", "subsystem": "Flow Sensor",
+            "category": "Sensor", "external_key": "water_flow", "device_profile": "water_flow",
+        })
+        self.assertEqual(row["unit_price_usd"], 8.90)
+        self.assertEqual(row["price_source_name"], "DFRobot")
+        self.assertEqual(row["price_source_url"], "https://www.dfrobot.com/product-1531.html")
+
     def test_interface_rows_include_exact_priced_headers_and_divider_resistors(self):
         sensor = profile_row({
             "reference": "U1", "node_id": "turbidity", "subsystem": "Turbidity Sensor",
@@ -77,6 +86,7 @@ class ExternalDevicePowerPathTests(unittest.TestCase):
         self.assertEqual(header["package"], "HDR-3-P2.54")
         self.assertEqual(header["supplier_mfr_part"], "PZ254V-11-03P")
         self.assertEqual(len(resistors), 2)
+        self.assertTrue(all(row["mfr_part"] == "10k 1% 0603 resistor" and row["supplier_mfr_part"] == "RC0603FR-0710KL" and row["package"] == "0603" and row["board_profile"] == "student-divider-10k" for row in resistors))
         self.assertTrue(all(row["lcsc"] == "C98220" and row["unit_price_usd"] == 0.0034 and row["moq"] == 100 for row in resistors))
 
 

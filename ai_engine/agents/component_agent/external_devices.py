@@ -101,6 +101,7 @@ PRICE_SNAPSHOTS = {
     "logic_regulator": {"unit_price_usd": 0.1486, "price_source_url": "https://www.lcsc.com/product-detail/C404027.html", "price_source_name": "LCSC", "price_basis": "Supplier unit price at MOQ 5", "moq": 5, "lcsc": "C404027"},
     "water_controller": {"unit_price_usd": 6.00, "price_source_url": "https://www.raspberrypi.com/products/raspberry-pi-pico/", "price_source_name": "Raspberry Pi", "price_basis": "Manufacturer stated list price, quantity 1"},
     "water_adc": {"unit_price_usd": 1.4406, "price_source_url": "https://www.lcsc.com/product-detail/C37593.html", "price_source_name": "LCSC", "price_basis": "Supplier unit price, quantity 1", "moq": 1, "lcsc": "C37593"},
+    "water_flow": {"unit_price_usd": 8.90, "price_source_url": "https://www.dfrobot.com/product-1531.html", "price_source_name": "DFRobot", "price_basis": "Manufacturer list price, quantity 1"},
     "water_turbidity": {"unit_price_usd": 9.90, "price_source_url": "https://www.dfrobot.com/product-1394.html", "price_source_name": "DFRobot", "price_basis": "Manufacturer list price, quantity 1"},
     "water_temperature": {"unit_price_usd": 9.95, "price_source_url": "https://www.adafruit.com/product/381", "price_source_name": "Adafruit", "price_basis": "Manufacturer list price, quantity 1"},
     "water_pump_driver": {"unit_price_usd": 5.95, "price_source_url": "https://www.adafruit.com/product/3297", "price_source_name": "Adafruit", "price_basis": "Manufacturer list price, quantity 1"},
@@ -441,7 +442,8 @@ def add_interfaces(rows):
                 rref = f"R{number}"; used.add(rref)
                 quantity = device.get("build_quantity", 1)
                 unit_price = RESISTOR_PRICE_SNAPSHOT["unit_price_usd"]
-                rows.append({"reference": rref, "mfr_part": RESISTOR_PRICE_SNAPSHOT["mfr_part"], "manufacturer": RESISTOR_PRICE_SNAPSHOT["manufacturer"],
+                rows.append({"reference": rref, "mfr_part": "10k 1% 0603 resistor", "supplier_mfr_part": RESISTOR_PRICE_SNAPSHOT["mfr_part"],
+                             "manufacturer": RESISTOR_PRICE_SNAPSHOT["manufacturer"],
                              "lcsc": RESISTOR_PRICE_SNAPSHOT["lcsc"], "description": "10kΩ ±1%, 100mW, 0603 thick-film resistor",
                              "package": "0603", "board_profile": "student-divider-10k",
                              "subsystem": f"{device['subsystem']} voltage divider ({leg})", "category": "Expansion", "build_quantity": device.get("build_quantity", 1),
