@@ -17,14 +17,14 @@ PROFILES = {
         "source_url": "https://datasheets.raspberrypi.com/picow/pico-w-datasheet.pdf",
         "package": "MODULE-PICO-40", "board_profile": "pico-w-40", "external": False,
         "includes": ["Pico W module", "two 20-pin 2.54mm male headers to solder to the module"],
-        "assembly": "Mount the Pico W on the carrier's two 20-pin rows, 17.78mm apart. Regulated 5V feeds VSYS (pin 39); VBUS and 3V3 output are not tied to the carrier rails. Do not simultaneously attach USB power without source isolation. BLE is inside this module, not a separate RF IC. Firmware: I2C0 GP4/GP5, OneWire GP6, flow GP7, pump PWM GP8, buzzer PWM GP9, LED GP10, UV PWM GP11. Keep pump and UV off during startup and do not run both at full power together on the 1A supply.",
+        "assembly": "Mount the Pico W on the carrier's two 20-pin rows, 17.78mm apart. Regulated 5V feeds VSYS (pin 39); VBUS and 3V3 output are not tied to the carrier rails. Do not simultaneously attach USB power without source isolation. BLE is inside this module, not a separate RF IC. Firmware: I2C0 GP4/GP5, OneWire GP6, flow GP7, pump PWM GP8, buzzer PWM GP9, LED GP10, UV PWM GP11, conductivity analog input GP26/ADC0. Keep pump and UV off during startup and do not run both at full power together on the 1A supply.",
     },
     "water_adc": {
         "label": "Four-channel Water Sensor ADC", "category": "Input", "manufacturer": "Texas Instruments",
         "mfr_part": "ADS1115IDGSR", "description": "Four-channel 16-bit I2C ADC for conditioned water-sensor signals",
         "source_url": "https://www.ti.com/lit/ds/symlink/ads1115.pdf",
         "package": "VSSOP-10", "board_profile": "ads1115-dgs", "external": False,
-        "assembly": "3.3V supply, ADDR grounded (I2C address 0x48), ALERT/RDY unused. AIN0=pH, AIN1=TDS, AIN2=pressure/2, AIN3=turbidity/2. Set the appropriate PGA range (for example +/-4.096V); a PGA range never permits inputs above the actual supply. Calibrate sensors including divider/loading tolerances. Fit a local 100nF supply capacitor.",
+        "assembly": "3.3V supply, ADDR grounded (I2C address 0x48), ALERT/RDY unused. AIN0=pH, AIN1=TDS, AIN2=pressure/2, AIN3=turbidity/2; the SEN0451 conductivity output uses the Pico W's GP26/ADC0 instead. Set the appropriate PGA range (for example +/-4.096V); a PGA range never permits inputs above the actual supply. Calibrate sensors including divider/loading tolerances. Fit a local 100nF supply capacitor.",
     },
     "water_flow": {
         "label": "Flow Sensor", "category": "Sensor", "manufacturer": "DFRobot", "mfr_part": "SEN0216",
@@ -223,7 +223,13 @@ def complete_nets(nets, rows, architecture):
         rail = power if PROFILES[key].get("rail_v") == 5 else logic
         rail["members"].append({"ref_id": ref, "role": "SUPPLY"})
     ground["members"].append({"ref_id": adc, "role": "GROUND", "pin_function": "ADDR"})
-    analog_channels = {"ph": "AIN0", "tds": "AIN1", "water_pressure": "AIN2", "water_turbidity": "AIN3"}
+    analog_destinations = {
+        "ph": (adc, "AIN0"), "tds": (adc, "AIN1"),
+        "water_pressure": (adc, "AIN2"), "water_turbidity": (adc, "AIN3"),
+        # SEN0451 is conditioned to 0–3V, within the Pico W's 3.3V ADC range;
+        # reserving ADC0 keeps the ADS1115 channel assignment stable.
+        "conductivity": (controller, "ADC0"),
+    }
     gpio_functions = {"water_temperature": "GP6", "water_flow": "GP7", "water_pump_driver": "GP8", "water_buzzer_driver": "GP9", "water_led": "GP10", "water_uv": "GP11"}
     port_keys = {port(k): k for k, r in by_key.items() if r.get("pcb_references") and not PROFILES.get(k, {}).get("via_profile")}
     for net in nets:
@@ -235,11 +241,12 @@ def complete_nets(nets, rows, architecture):
                 elif m["ref_id"] == adc: m["pin_function"] = "SCL" if m["role"] == "CLOCK" else "SDA"
             continue
         sensor = next((port_keys[m["ref_id"]] for m in net["members"] if m["ref_id"] in port_keys), None)
-        if sensor in analog_channels:
-            # prepare_architecture initially links ph/TDS to the MCU; the ADC
-            # replaces that destination. It never treats a GPIO as an ADC.
+        if sensor in analog_destinations:
+            # prepare_architecture initially links analog sensors to the MCU;
+            # the selected ADC or native analog pin replaces that destination.
+            destination, pin_function = analog_destinations[sensor]
             for m in net["members"]:
-                if m["ref_id"] in (controller, adc): m.update(ref_id=adc, pin_function=analog_channels[sensor])
+                if m["ref_id"] in (controller, adc): m.update(ref_id=destination, pin_function=pin_function)
         elif sensor in gpio_functions:
             net["voltage_v"] = 3.3
             for m in net["members"]:

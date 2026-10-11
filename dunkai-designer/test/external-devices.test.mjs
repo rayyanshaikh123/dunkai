@@ -94,6 +94,18 @@ test("a required sensor signal cannot disappear even if supply and ground are co
   await assert.rejects(generateStructured(design, "Missing analog signal", resolution, provider, directory), /Required device TDS Sensor has an incomplete PCB connection/)
 }))
 
+test("a missing sensor supply names the exact open header pin", () => withDirectory(async (directory) => {
+  const input = fixture()
+  input.nets = input.nets.filter((n) => n.net_class !== "power")
+  const design = await intake(input)
+  const provider = { name: "test" }
+  const resolution = await resolveComponents(design, directory, provider)
+  await assert.rejects(
+    generateStructured(design, "Missing sensor supply", resolution, provider, directory),
+    /Required device TDS Sensor has an incomplete PCB connection at J1: unmapped pin2/
+  )
+}))
+
 test("a profile cannot certify an unrelated part or cross-connect the regulator rails", () => withDirectory(async (directory) => {
   const input = fixture()
   input.components.find((c) => c.ref_id === "U1").part_number = "SOME_OTHER_REGULATOR"

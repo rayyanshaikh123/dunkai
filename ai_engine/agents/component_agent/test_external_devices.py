@@ -74,6 +74,29 @@ class ExternalDeviceTests(unittest.TestCase):
         self.assertEqual({d["key"] for d in output["architecture"]["required_devices"]}, {"tds", "ph", "battery", "solar"})
         self.assertNotIn("errors", nodes.pcb_node(output))
 
+    def test_conductivity_sensor_has_a_documented_part_and_a_distinct_pcb_signal_path(self):
+        requirements = {**REQUIREMENTS, "hardware_inputs": ["TDS Sensor", "pH Sensor", "Conductivity Sensor"]}
+        output, _ = component_output(requirements)
+        self.assertNotIn("errors", output)
+        row = next(r for r in output["bom"]["rows"] if r.get("external_key") == "conductivity")
+        self.assertEqual(row["mfr_part"], "SEN0451")
+        self.assertEqual(row["status"], "DOCUMENTED_DEFAULT")
+        self.assertTrue(row["pcb_references"])
+        self.assertEqual(coverage_issues(output["architecture"], output["bom"]["rows"]), [])
+
+        pcb = nodes.pcb_node(output)
+        self.assertNotIn("errors", pcb)
+        ir = pcb["pcb_ir"]
+        external = next(c for c in ir["external_components"] if c.get("external_key") == "conductivity")
+        self.assertEqual(external["mfr_part"], "SEN0451")
+        header = next(c for c in ir["components"] if c["ref_id"] == external["pcb_references"][0])
+        self.assertEqual(header["board_profile"], "student-sensor-3p")
+        signal_nets = [n for n in ir["nets"] if n["net_class"] == "signal" and
+                       any(m["ref_id"] == header["ref_id"] for m in n["members"])]
+        self.assertEqual(len(signal_nets), 1)
+        self.assertGreaterEqual(len(signal_nets[0]["members"]), 2)
+        self.assertTrue(nodes._validate_handoff(output, ir)["well_formed"])
+
     def test_all_four_physical_devices_and_charging_hardware_remain_in_system_bom(self):
         output, retriever = component_output()
         self.assertNotIn("errors", output)

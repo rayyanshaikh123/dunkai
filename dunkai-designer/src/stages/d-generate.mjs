@@ -156,10 +156,15 @@ export async function generateStructured(design, brief, resolution, provider, wo
         : component?.board_profile === "student-i2c-4p" ? ["pin1", "pin2", "pin3", "pin4"]
         : component?.board_profile === "student-power-2p" ? ["pin1", "pin2"] : []
       const open = mapping.members.filter((m) => m.ref_id === ref && !m.pins.length)
+      const missingPins = expectedPins.filter((pin) => !mapping.assignments[ref]?.[pin])
       const lonely = Object.values(mapping.assignments[ref] ?? {}).filter((net) =>
         Object.entries(mapping.assignments).filter(([other, pins]) => other !== ref && Object.values(pins).includes(net)).length === 0)
-      if (open.length || lonely.length || !mapping.assignments[ref] || expectedPins.some((pin) => !mapping.assignments[ref][pin])) {
-        throw new Error(`Required device ${device.label} has an incomplete PCB connection at ${ref}; its interface cannot be omitted`)
+      if (open.length || lonely.length || !mapping.assignments[ref] || missingPins.length) {
+        const details = [
+          missingPins.length ? `unmapped ${missingPins.join(", ")}` : "",
+          open.length ? `unresolved ${open.map((member) => `${member.net} (${member.role})`).join(", ")}` : "",
+        ].filter(Boolean).join("; ")
+        throw new Error(`Required device ${device.label} has an incomplete PCB connection at ${ref}${details ? `: ${details}` : ""}; its interface cannot be omitted`)
       }
     }
   }
